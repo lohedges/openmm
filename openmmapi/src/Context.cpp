@@ -190,10 +190,24 @@ void Context::setPositions(const vector<Vec3>& positions) {
     impl->setPositions(positions);
 }
 
+void Context::setPositions(const vector<Vec3>& positions, int firstIndex) {
+    int numParticles = impl->getSystem().getNumParticles();
+    if (firstIndex < 0 || firstIndex + (int) positions.size() > numParticles)
+        throw OpenMMException("Illegal firstIndex or positions size in setPositions()");
+    impl->setPositions(positions, firstIndex);
+}
+
 void Context::setVelocities(const vector<Vec3>& velocities) {
     if ((int) velocities.size() != impl->getSystem().getNumParticles())
         throw OpenMMException("Called setVelocities() on a Context with the wrong number of velocities");
     impl->setVelocities(velocities);
+}
+
+void Context::setVelocities(const vector<Vec3>& velocities, int firstIndex) {
+    int numParticles = impl->getSystem().getNumParticles();
+    if (firstIndex < 0 || firstIndex + (int) velocities.size() > numParticles)
+        throw OpenMMException("Illegal firstIndex or velocities size in setVelocities()");
+    impl->setVelocities(velocities, firstIndex);
 }
 
 void Context::setVelocitiesToTemperature(double temperature, int randomSeed) {

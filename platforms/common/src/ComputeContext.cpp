@@ -66,8 +66,15 @@ void ComputeContext::addForce(ComputeForceInfo* force) {
     forces.push_back(force);
 }
 
+void ComputeContext::buildInverseAtomIndex() {
+    inverseAtomIndex.resize(numAtoms);
+    for (int i = 0; i < numAtoms; ++i)
+        inverseAtomIndex[atomIndex[i]] = i;
+}
+
 void ComputeContext::setAtomIndex(std::vector<int>& index){
     atomIndex = index;
+    buildInverseAtomIndex();
     getAtomIndexArray().upload(atomIndex);
     for (auto listener : reorderListeners)
         listener->execute();
@@ -490,6 +497,7 @@ void ComputeContext::resetAtomOrder() {
         atomIndex[i] = i;
         posCellOffsets[i] = newCellOffsets[i];
     }
+    buildInverseAtomIndex();
     getAtomIndexArray().upload(atomIndex);
     for (auto listener : reorderListeners)
         listener->execute();
@@ -693,6 +701,7 @@ void ComputeContext::reorderAtomsImpl() {
         atomIndex[i] = originalIndex[i];
         posCellOffsets[i] = newCellOffsets[i];
     }
+    buildInverseAtomIndex();
     getPosq().upload(newPosq);
     if (getUseMixedPrecision())
         getPosqCorrection().upload(newPosqCorrection);

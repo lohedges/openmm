@@ -57,19 +57,31 @@ using namespace Lepton;
 
 void CommonUpdateStateDataKernel::initialize(const System& system) {
     ContextSelector selector(cc);
-    floatBuffer.initialize<float>(cc, 3*system.getNumParticles(), "floatBuffer");
+    int numParticles = system.getNumParticles();
+    floatBuffer.initialize<float>(cc, 3*numParticles, "floatBuffer");
     map<string, string> defines;
     ComputeProgram program = cc.compileProgram(CommonKernelSources::copyCoordinateBuffers, defines);
     copyFloatKernel = program->createKernel("copyFloatBuffer");
     copyFloatKernel->addArg(floatBuffer);
     copyFloatKernel->addArg();
     copyFloatKernel->addArg(cc.getNumAtoms());
+    scatterIndexBuffer.initialize<int>(cc, numParticles, "scatterIndexBuffer");
+    scatterFloatKernel = program->createKernel("scatterFloatBuffer");
+    scatterFloatKernel->addArg(floatBuffer);
+    scatterFloatKernel->addArg();
+    scatterFloatKernel->addArg(scatterIndexBuffer);
+    scatterFloatKernel->addArg();
     if (cc.getUseMixedPrecision() || cc.getUseDoublePrecision()) {
-        doubleBuffer.initialize<double>(cc, 3*system.getNumParticles(), "doubleBuffer");
+        doubleBuffer.initialize<double>(cc, 3*numParticles, "doubleBuffer");
         copyDoubleKernel = program->createKernel("copyDoubleBuffer");
         copyDoubleKernel->addArg(doubleBuffer);
         copyDoubleKernel->addArg();
         copyDoubleKernel->addArg(cc.getNumAtoms());
+        scatterDoubleKernel = program->createKernel("scatterDoubleBuffer");
+        scatterDoubleKernel->addArg(doubleBuffer);
+        scatterDoubleKernel->addArg();
+        scatterDoubleKernel->addArg(scatterIndexBuffer);
+        scatterDoubleKernel->addArg();
     }
 }
 
@@ -225,6 +237,65 @@ void CommonUpdateStateDataKernel::setPositions(ContextImpl& context, const vecto
     cc.reorderAtoms();
 }
 
+void CommonUpdateStateDataKernel::setPositions(ContextImpl& context, const vector<Vec3>& positions, int firstIndex) {
+    ContextSelector selector(cc);
+    int k = (int) positions.size();
+    if (k == 0)
+        return;
+    const vector<int>& inverseOrder = cc.getInverseAtomIndex();
+
+    // Map the k user indices to their current GPU slots and upload the index array.
+    vector<int> gpuIndices(k);
+    for (int i = 0; i < k; ++i)
+        gpuIndices[i] = inverseOrder[firstIndex + i];
+    scatterIndexBuffer.uploadSubArray(gpuIndices.data(), 0, k);
+
+    if (cc.getUseDoublePrecision()) {
+        double* pos = (double*) cc.getPinnedBuffer();
+        for (int i = 0; i < k; ++i) {
+            pos[3*i]   = positions[i][0];
+            pos[3*i+1] = positions[i][1];
+            pos[3*i+2] = positions[i][2];
+        }
+        doubleBuffer.uploadSubArray(pos, 0, 3*k);
+        scatterDoubleKernel->setArg(1, cc.getPosq());
+        scatterDoubleKernel->setArg(3, k);
+        scatterDoubleKernel->execute(k);
+    }
+    else {
+        float* pos = (float*) cc.getPinnedBuffer();
+        for (int i = 0; i < k; ++i) {
+            pos[3*i]   = (float) positions[i][0];
+            pos[3*i+1] = (float) positions[i][1];
+            pos[3*i+2] = (float) positions[i][2];
+        }
+        floatBuffer.uploadSubArray(pos, 0, 3*k);
+        scatterFloatKernel->setArg(1, cc.getPosq());
+        scatterFloatKernel->setArg(3, k);
+        scatterFloatKernel->execute(k);
+    }
+    if (cc.getUseMixedPrecision()) {
+        // Scatter the sub-float precision corrections, reusing floatBuffer as staging.
+        float* corr = (float*) cc.getPinnedBuffer();
+        for (int i = 0; i < k; ++i) {
+            double px = positions[i][0], py = positions[i][1], pz = positions[i][2];
+            corr[3*i]   = (float)(px - (float)px);
+            corr[3*i+1] = (float)(py - (float)py);
+            corr[3*i+2] = (float)(pz - (float)pz);
+        }
+        floatBuffer.uploadSubArray(corr, 0, 3*k);
+        scatterFloatKernel->setArg(1, cc.getPosqCorrection());
+        scatterFloatKernel->setArg(3, k);
+        scatterFloatKernel->execute(k);
+    }
+
+    // Reset periodic cell offsets for the updated atoms.
+    for (int i = 0; i < k; ++i)
+        cc.getPosCellOffsets()[gpuIndices[i]] = mm_int4(0, 0, 0, 0);
+
+    cc.reorderAtoms();
+}
+
 void CommonUpdateStateDataKernel::getVelocities(ContextImpl& context, vector<Vec3>& velocities) {
     ContextSelector selector(cc);
     const vector<int>& order = cc.getAtomIndex();
@@ -275,6 +346,44 @@ void CommonUpdateStateDataKernel::setVelocities(ContextImpl& context, const vect
         floatBuffer.upload(vel);
         copyFloatKernel->setArg(1, cc.getVelm());
         copyFloatKernel->execute(numParticles);
+    }
+}
+
+void CommonUpdateStateDataKernel::setVelocities(ContextImpl& context, const vector<Vec3>& velocities, int firstIndex) {
+    ContextSelector selector(cc);
+    int k = (int) velocities.size();
+    if (k == 0)
+        return;
+    const vector<int>& inverseOrder = cc.getInverseAtomIndex();
+
+    vector<int> gpuIndices(k);
+    for (int i = 0; i < k; ++i)
+        gpuIndices[i] = inverseOrder[firstIndex + i];
+    scatterIndexBuffer.uploadSubArray(gpuIndices.data(), 0, k);
+
+    if (cc.getUseDoublePrecision() || cc.getUseMixedPrecision()) {
+        double* vel = (double*) cc.getPinnedBuffer();
+        for (int i = 0; i < k; ++i) {
+            vel[3*i]   = velocities[i][0];
+            vel[3*i+1] = velocities[i][1];
+            vel[3*i+2] = velocities[i][2];
+        }
+        doubleBuffer.uploadSubArray(vel, 0, 3*k);
+        scatterDoubleKernel->setArg(1, cc.getVelm());
+        scatterDoubleKernel->setArg(3, k);
+        scatterDoubleKernel->execute(k);
+    }
+    else {
+        float* vel = (float*) cc.getPinnedBuffer();
+        for (int i = 0; i < k; ++i) {
+            vel[3*i]   = (float) velocities[i][0];
+            vel[3*i+1] = (float) velocities[i][1];
+            vel[3*i+2] = (float) velocities[i][2];
+        }
+        floatBuffer.uploadSubArray(vel, 0, 3*k);
+        scatterFloatKernel->setArg(1, cc.getVelm());
+        scatterFloatKernel->setArg(3, k);
+        scatterFloatKernel->execute(k);
     }
 }
 

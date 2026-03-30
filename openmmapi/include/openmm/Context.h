@@ -155,18 +155,40 @@ public:
      * Set the positions of all particles in the System (measured in nm).  This method simply sets the positions
      * without checking to see whether they satisfy distance constraints.  If you want constraints to be
      * enforced, call applyConstraints() after setting the positions.
-     * 
+     *
      * @param positions   a vector whose length equals the number of particles in the System.  The i'th element
      * contains the position of the i'th particle.
      */
     void setPositions(const std::vector<Vec3>& positions);
     /**
+     * Set the positions of a contiguous range of particles in the System (measured in nm).  This is
+     * more efficient than setPositions() when only a small subset of particles have moved, for example
+     * during a GCMC simulation where a single molecule is inserted or deleted.
+     *
+     * This method does not enforce distance constraints.  Call applyConstraints() separately if needed.
+     * setPositions() must have been called at least once before this method can be used.
+     *
+     * @param positions   a vector of new positions.  Element i contains the position of particle
+     *                    firstIndex+i.
+     * @param firstIndex  the index of the first particle whose position is being set.
+     */
+    void setPositions(const std::vector<Vec3>& positions, int firstIndex);
+    /**
      * Set the velocities of all particles in the System (measured in nm/picosecond).
-     * 
+     *
      * @param velocities  a vector whose length equals the number of particles in the System.  The i'th element
      * contains the velocity of the i'th particle.
      */
     void setVelocities(const std::vector<Vec3>& velocities);
+    /**
+     * Set the velocities of a contiguous range of particles in the System (measured in nm/picosecond).
+     * This is more efficient than setVelocities() when only a small subset of particles have changed.
+     *
+     * @param velocities  a vector of new velocities.  Element i contains the velocity of particle
+     *                    firstIndex+i.
+     * @param firstIndex  the index of the first particle whose velocity is being set.
+     */
+    void setVelocities(const std::vector<Vec3>& velocities, int firstIndex);
     /**
      * Set the velocities of all particles in the System to random values chosen from a Boltzmann
      * distribution at a given temperature.

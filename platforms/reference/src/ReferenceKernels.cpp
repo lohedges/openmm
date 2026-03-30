@@ -223,12 +223,24 @@ void ReferenceUpdateStateDataKernel::setPositions(ContextImpl& context, const st
     extractPositions(context) = positions;
 }
 
+void ReferenceUpdateStateDataKernel::setPositions(ContextImpl& context, const std::vector<Vec3>& positions, int firstIndex) {
+    vector<Vec3>& stored = extractPositions(context);
+    for (int i = 0; i < (int) positions.size(); ++i)
+        stored[firstIndex + i] = positions[i];
+}
+
 void ReferenceUpdateStateDataKernel::getVelocities(ContextImpl& context, std::vector<Vec3>& velocities) {
     velocities = extractVelocities(context);
 }
 
 void ReferenceUpdateStateDataKernel::setVelocities(ContextImpl& context, const std::vector<Vec3>& velocities) {
     extractVelocities(context) = velocities;
+}
+
+void ReferenceUpdateStateDataKernel::setVelocities(ContextImpl& context, const std::vector<Vec3>& velocities, int firstIndex) {
+    vector<Vec3>& stored = extractVelocities(context);
+    for (int i = 0; i < (int) velocities.size(); ++i)
+        stored[firstIndex + i] = velocities[i];
 }
 
 void ReferenceUpdateStateDataKernel::computeShiftedVelocities(ContextImpl& context, double timeShift, std::vector<Vec3>& velocities) {

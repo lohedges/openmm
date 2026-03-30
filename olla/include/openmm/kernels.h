@@ -183,6 +183,20 @@ public:
      */
     virtual void setPositions(ContextImpl& context, const std::vector<Vec3>& positions) = 0;
     /**
+     * Set the positions of a contiguous range of particles.  The default implementation
+     * falls back to a full get/update/set cycle; platforms may override for efficiency.
+     *
+     * @param positions   the new positions for the particles
+     * @param firstIndex  the index of the first particle being updated
+     */
+    virtual void setPositions(ContextImpl& context, const std::vector<Vec3>& positions, int firstIndex) {
+        std::vector<Vec3> allPositions;
+        getPositions(context, allPositions);
+        for (int i = 0; i < (int) positions.size(); ++i)
+            allPositions[firstIndex + i] = positions[i];
+        setPositions(context, allPositions);
+    }
+    /**
      * Get the velocities of all particles.
      *
      * @param velocities  on exit, this contains the particle velocities
@@ -194,6 +208,20 @@ public:
      * @param velocities  a vector containing the particle velocities
      */
     virtual void setVelocities(ContextImpl& context, const std::vector<Vec3>& velocities) = 0;
+    /**
+     * Set the velocities of a contiguous range of particles.  The default implementation
+     * falls back to a full get/update/set cycle; platforms may override for efficiency.
+     *
+     * @param velocities  the new velocities for the particles
+     * @param firstIndex  the index of the first particle being updated
+     */
+    virtual void setVelocities(ContextImpl& context, const std::vector<Vec3>& velocities, int firstIndex) {
+        std::vector<Vec3> allVelocities;
+        getVelocities(context, allVelocities);
+        for (int i = 0; i < (int) velocities.size(); ++i)
+            allVelocities[firstIndex + i] = velocities[i];
+        setVelocities(context, allVelocities);
+    }
     /**
      * Compute velocities, shifted in time to account for a leapfrog integrator.  The shift
      * is based on the most recently computed forces.

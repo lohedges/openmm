@@ -89,6 +89,46 @@
         state = _openmm.Context_getState(self, types, enforcePeriodicBox, groups_mask)
         return state
 
+    def setPositions(self, positions, firstIndex=None):
+        """Set the positions of particles in the System (measured in nm).
+
+        Parameters
+        ----------
+        positions : sequence of Vec3
+            New positions. If *firstIndex* is given, this sequence covers
+            particles ``firstIndex`` to ``firstIndex + len(positions) - 1``
+            and the rest of the system is unchanged. Otherwise all particle
+            positions must be provided.
+        firstIndex : int, optional
+            Index of the first particle to update. When omitted the full
+            position array is replaced (original behaviour).
+        """
+        if unit.is_quantity(positions):
+            positions = positions.value_in_unit(unit.nanometer)
+        if firstIndex is None:
+            return _openmm.Context_setPositions(self, positions)
+        return _openmm.Context_setPositions(self, positions, firstIndex)
+
+    def setVelocities(self, velocities, firstIndex=None):
+        """Set the velocities of particles in the System (measured in nm/ps).
+
+        Parameters
+        ----------
+        velocities : sequence of Vec3
+            New velocities. If *firstIndex* is given, this sequence covers
+            particles ``firstIndex`` to ``firstIndex + len(velocities) - 1``
+            and the rest of the system is unchanged. Otherwise all particle
+            velocities must be provided.
+        firstIndex : int, optional
+            Index of the first particle to update. When omitted the full
+            velocity array is replaced (original behaviour).
+        """
+        if unit.is_quantity(velocities):
+            velocities = velocities.value_in_unit(unit.nanometer/unit.picosecond)
+        if firstIndex is None:
+            return _openmm.Context_setVelocities(self, velocities)
+        return _openmm.Context_setVelocities(self, velocities, firstIndex)
+
   %}
 
   %feature("docstring") createCheckpoint "Create a checkpoint recording the current state of the Context.

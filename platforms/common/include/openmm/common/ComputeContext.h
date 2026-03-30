@@ -431,9 +431,17 @@ public:
     virtual ThreadPool& getThreadPool() = 0;
     /**
      * Get the host-side vector which contains the index of each atom.
+     * atomIndex[gpuSlot] = userIndex.
      */
     const std::vector<int>& getAtomIndex() const {
         return atomIndex;
+    }
+    /**
+     * Get the inverse of the atom index map.
+     * inverseAtomIndex[userIndex] = gpuSlot.
+     */
+    const std::vector<int>& getInverseAtomIndex() const {
+        return inverseAtomIndex;
     }
     /**
      * Set the vector which contains the index of each atom.
@@ -622,6 +630,7 @@ protected:
      */
     template <class Real, class Real4, class Mixed, class Mixed4>
     void reorderAtomsImpl();
+    void buildInverseAtomIndex();
     const System& system;
     double time;
     int numAtoms, paddedNumAtoms, computeForceCount, stepsSinceReorder;
@@ -632,6 +641,7 @@ protected:
     std::vector<Molecule> molecules;
     std::vector<MoleculeGroup> moleculeGroups;
     std::vector<int> atomIndex;
+    std::vector<int> inverseAtomIndex;
     std::vector<mm_int4> posCellOffsets;
     std::vector<ReorderListener*> reorderListeners;
     std::vector<ForcePreComputation*> preComputations;

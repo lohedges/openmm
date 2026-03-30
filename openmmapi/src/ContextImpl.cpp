@@ -235,12 +235,24 @@ void ContextImpl::setPositions(const std::vector<Vec3>& positions) {
     integrator.stateChanged(State::Positions);
 }
 
+void ContextImpl::setPositions(const std::vector<Vec3>& positions, int firstIndex) {
+    if (!hasSetPositions)
+        throw OpenMMException("setPositions() must be called before a partial position update");
+    updateStateDataKernel.getAs<UpdateStateDataKernel>().setPositions(*this, positions, firstIndex);
+    integrator.stateChanged(State::Positions);
+}
+
 void ContextImpl::getVelocities(std::vector<Vec3>& velocities) {
     updateStateDataKernel.getAs<UpdateStateDataKernel>().getVelocities(*this, velocities);
 }
 
 void ContextImpl::setVelocities(const std::vector<Vec3>& velocities) {
     updateStateDataKernel.getAs<UpdateStateDataKernel>().setVelocities(*this, velocities);
+    integrator.stateChanged(State::Velocities);
+}
+
+void ContextImpl::setVelocities(const std::vector<Vec3>& velocities, int firstIndex) {
+    updateStateDataKernel.getAs<UpdateStateDataKernel>().setVelocities(*this, velocities, firstIndex);
     integrator.stateChanged(State::Velocities);
 }
 

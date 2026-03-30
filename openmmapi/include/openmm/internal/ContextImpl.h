@@ -114,6 +114,13 @@ public:
      */
     void setPositions(const std::vector<Vec3>& positions);
     /**
+     * Set the positions of a contiguous range of particles.
+     *
+     * @param positions   the new positions for the particles
+     * @param firstIndex  the index of the first particle being updated
+     */
+    void setPositions(const std::vector<Vec3>& positions, int firstIndex);
+    /**
      * Get the velocities of all particles.
      *
      * @param velocities  on exit, this contains the particle velocities
@@ -125,6 +132,13 @@ public:
      * @param velocities  a vector containg the particle velocities
      */
     void setVelocities(const std::vector<Vec3>& velocities);
+    /**
+     * Set the velocities of a contiguous range of particles.
+     *
+     * @param velocities  the new velocities for the particles
+     * @param firstIndex  the index of the first particle being updated
+     */
+    void setVelocities(const std::vector<Vec3>& velocities, int firstIndex);
     /**
      * Get the current forces on all particles.
      *
