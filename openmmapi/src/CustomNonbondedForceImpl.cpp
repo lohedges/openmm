@@ -169,7 +169,6 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
     // Identify all particle classes (defined by parameters), and record the class of each particle.
 
     data.classes.clear();
-    data.interactionCount.clear();
     int numParticles = force.getNumParticles();
     map<vector<double>, int> classIndex;
     vector<int> atomClass(numParticles);
@@ -186,31 +185,25 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
             atomClass[i] = entry->second;
     }
     int numClasses = data.classes.size();
-    
+
     // Count the total number of particle pairs for each pair of classes.
-    
+
+    data.interactionCount.assign((size_t) numClasses*numClasses, 0);
     if (force.getNumInteractionGroups() == 0) {
         // Count the particles of each class.
-        
+
         vector<long long int> classCounts(numClasses, 0);
         for (int i = 0; i < numParticles; i++)
             classCounts[atomClass[i]]++;
         for (int i = 0; i < numClasses; i++) {
-            data.interactionCount[make_pair(i, i)] = (classCounts[i]*(classCounts[i]+1))/2;
+            data.interactionCount[(size_t) i*numClasses+i] = (classCounts[i]*(classCounts[i]+1))/2;
             for (int j = i+1; j < numClasses; j++)
-                data.interactionCount[make_pair(i, j)] = classCounts[i]*classCounts[j];
+                data.interactionCount[(size_t) i*numClasses+j] = classCounts[i]*classCounts[j];
         }
     }
     else {
-        // Initialize the counts to 0.
-        
-        for (int i = 0; i < numClasses; i++) {
-            for (int j = i; j < numClasses; j++)
-                data.interactionCount[make_pair(i, j)] = 0;
-        }
-        
         // Loop over interaction groups and count the interactions in each one.
-        
+
         for (int group = 0; group < force.getNumInteractionGroups(); group++) {
             set<int> set1, set2;
             force.getInteractionGroupParameters(group, set1, set2);
@@ -220,7 +213,7 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
                         continue;
                     int class1 = atomClass[*a1];
                     int class2 = atomClass[*a2];
-                    data.interactionCount[make_pair(min(class1, class2), max(class1, class2))]++;
+                    data.interactionCount[(size_t) min(class1, class2)*numClasses+max(class1, class2)]++;
                 }
         }
     }
@@ -316,14 +309,14 @@ double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVec
     vector<int> missing;
     for (int i = 0; i < numClasses; i++)
         for (int j = i; j < numClasses; j++) {
-            if (data.interactionCount.at(make_pair(i, j)) == 0)
+            if (data.interactionCount[(size_t) i*numClasses+j] == 0)
                 continue;
             pairs.push_back(make_pair(i, j));
             values.push_back(0.0);
             if (reuse && oldIndex[i] >= 0 && oldIndex[j] >= 0) {
                 int oldI = min(oldIndex[i], oldIndex[j]);
                 int oldJ = max(oldIndex[i], oldIndex[j]);
-                values.back() = oldIntegrals[oldI*numOldClasses+oldJ];
+                values.back() = oldIntegrals[(size_t) oldI*numOldClasses+oldJ];
                 continue;
             }
             missing.push_back(pairs.size()-1);
@@ -355,9 +348,10 @@ double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVec
         newIntegrals.clear();
     double sum = 0;
     for (int k = 0; k < (int) pairs.size(); k++) {
-        sum += data.interactionCount.at(pairs[k])*values[k];
+        size_t index = (size_t) pairs[k].first*numClasses+pairs[k].second;
+        sum += data.interactionCount[index]*values[k];
         if (remember)
-            newIntegrals[pairs[k].first*numClasses+pairs[k].second] = values[k];
+            newIntegrals[index] = values[k];
     }
     return sum;
 }

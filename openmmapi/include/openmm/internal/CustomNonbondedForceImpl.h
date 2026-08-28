@@ -101,7 +101,11 @@ public:
     CustomNonbondedForce::NonbondedMethod method = CustomNonbondedForce::NoCutoff;
     std::vector<std::vector<double> > classes;
     std::vector<std::string> paramNames, computedValueNames;
-    std::map<std::pair<int, int>, long long int> interactionCount;
+    /**
+     * The number of particle pairs for each pair of classes, stored as a
+     * numClasses x numClasses table, upper triangle only.
+     */
+    std::vector<long long int> interactionCount;
     std::vector<Lepton::CompiledVectorExpression> energyExpression;
     std::vector<std::vector<Lepton::CompiledVectorExpression> > derivExpressions;
     std::vector<Lepton::CompiledExpression> computedValueExpressions;
