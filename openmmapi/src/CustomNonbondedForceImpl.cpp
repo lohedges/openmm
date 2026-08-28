@@ -285,6 +285,85 @@ void CustomNonbondedForceImpl::updateLongRangeCorrection(const CustomNonbondedFo
     computeParticleClasses(force, data);
 }
 
+/**
+ * The maximum number of integrals to remember.  Each entry is a few dozen bytes, and the
+ * cache is only useful while the same classes keep recurring, so there is no point in
+ * letting it grow without bound.
+ */
+static const size_t MAX_INTEGRAL_CACHE_SIZE = 100000;
+
+static void buildIntegralKey(vector<double>& key, const vector<double>& params1, const vector<double>& params2, const vector<double>& globalValues) {
+    key.clear();
+    key.insert(key.end(), params1.begin(), params1.end());
+    key.insert(key.end(), params2.begin(), params2.end());
+    key.insert(key.end(), globalValues.begin(), globalValues.end());
+}
+
+/**
+ * Sum interactionCount*integral over all pairs of classes, reusing integrals computed on
+ * earlier calls.  An integral depends only on the parameters of the two classes and the
+ * global parameters, so when per-particle parameters change, only the pairs involving a
+ * class that is new need to be integrated again.
+ */
+double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVectorExpression&(int)>& getExpression,
+        map<vector<double>, double>& cache, const vector<double>& globalValues, LongRangeCorrectionData& data,
+        const vector<vector<double> >& computedValues, const CustomNonbondedForce& force, const Context& context, ThreadPool& threads) {
+    // Look up the integrals we already have, and record which ones are missing.
+
+    int numClasses = data.classes.size();
+    vector<pair<int, int> > pairs;
+    vector<double> values;
+    vector<int> missing;
+    vector<double> key;
+    for (int i = 0; i < numClasses; i++)
+        for (int j = i; j < numClasses; j++) {
+            if (data.interactionCount.at(make_pair(i, j)) == 0)
+                continue;
+            buildIntegralKey(key, data.classes[i], data.classes[j], globalValues);
+            map<vector<double>, double>::const_iterator entry = cache.find(key);
+            pairs.push_back(make_pair(i, j));
+            if (entry == cache.end()) {
+                missing.push_back(pairs.size()-1);
+                values.push_back(0.0);
+            }
+            else
+                values.push_back(entry->second);
+        }
+
+    // Compute the missing integrals in parallel.  Each thread writes to its own elements
+    // of values, so no synchronization is needed.
+
+    atomic<int> atomicCounter(0);
+    threads.execute([&] (ThreadPool& threads, int threadIndex) {
+        Lepton::CompiledVectorExpression& expression = getExpression(threadIndex);
+        while (true) {
+            int k = atomicCounter++;
+            if (k >= (int) missing.size())
+                break;
+            int i = pairs[missing[k]].first;
+            int j = pairs[missing[k]].second;
+            values[missing[k]] = integrateInteraction(expression, data.classes[i], data.classes[j],
+                    computedValues[i], computedValues[j], force, context, data.paramNames, data.computedValueNames);
+        }
+    });
+    threads.waitForThreads();
+
+    // Record the new integrals and add everything up.
+
+    if (cache.size()+missing.size() > MAX_INTEGRAL_CACHE_SIZE)
+        cache.clear();
+    for (int k = 0; k < (int) missing.size(); k++) {
+        int i = pairs[missing[k]].first;
+        int j = pairs[missing[k]].second;
+        buildIntegralKey(key, data.classes[i], data.classes[j], globalValues);
+        cache[key] = values[missing[k]];
+    }
+    double sum = 0;
+    for (int k = 0; k < (int) pairs.size(); k++)
+        sum += data.interactionCount.at(pairs[k])*values[k];
+    return sum;
+}
+
 void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForce& force, LongRangeCorrectionData& data, const Context& context, double& coefficient, vector<double>& derivatives, ThreadPool& threads) {
     if (data.method == CustomNonbondedForce::NoCutoff || data.method == CustomNonbondedForce::CutoffNonPeriodic) {
         coefficient = 0.0;
@@ -313,60 +392,27 @@ void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForc
         }
     }
 
-    // Compute the coefficient.  Use multiple threads to compute the integrals in parallel.
+    // Compute the coefficient.  The integrals are computed in parallel, reusing any that
+    // were already computed on an earlier call.
 
+    vector<double> globalValues;
+    for (int i = 0; i < force.getNumGlobalParameters(); i++)
+        globalValues.push_back(context.getParameter(force.getGlobalParameterName(i)));
     double nPart = (double) context.getSystem().getNumParticles();
     double numInteractions = (nPart*(nPart+1))/2;
-    vector<double> threadSum(threads.getNumThreads(), 0.0);
-    atomic<int> atomicCounter(0);
-    threads.execute([&] (ThreadPool& threads, int threadIndex) {
-        Lepton::CompiledVectorExpression& expression = data.energyExpression[threadIndex];
-        while (true) {
-            int i = atomicCounter++;
-            if (i >= numClasses)
-                break;
-            for (int j = i; j < numClasses; j++) {
-                long long int count = data.interactionCount.at(make_pair(i, j));
-                if (count == 0)
-                    continue;
-                threadSum[threadIndex] += count*integrateInteraction(expression, data.classes[i], data.classes[j],
-                        computedValues[i], computedValues[j], force, context, data.paramNames, data.computedValueNames);
-            }
-        }
-    });
-    threads.waitForThreads();
-    double sum = 0;
-    for (int i = 0; i < threadSum.size(); i++)
-        sum += threadSum[i];
+    double sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.energyExpression[threadIndex]; },
+            data.integralCache, globalValues, data, computedValues, force, context, threads);
     sum /= numInteractions;
     coefficient = 2*M_PI*nPart*nPart*sum;
-    
+
     // Now do the same for parameter derivatives.
-    
+
     int numDerivs = data.derivExpressions[0].size();
     derivatives.resize(numDerivs);
+    data.derivIntegralCache.resize(numDerivs);
     for (int k = 0; k < numDerivs; k++) {
-        atomicCounter = 0;
-        threads.execute([&] (ThreadPool& threads, int threadIndex) {
-            threadSum[threadIndex] = 0;
-            Lepton::CompiledVectorExpression& expression = data.derivExpressions[threadIndex][k];
-            while (true) {
-                int i = atomicCounter++;
-                if (i >= numClasses)
-                    break;
-                for (int j = i; j < numClasses; j++) {
-                    long long int count = data.interactionCount.at(make_pair(i, j));
-                    if (count == 0)
-                        continue;
-                    threadSum[threadIndex] += count*integrateInteraction(expression, data.classes[i], data.classes[j],
-                            computedValues[i], computedValues[j], force, context, data.paramNames, data.computedValueNames);
-                }
-            }
-        });
-        threads.waitForThreads();
-        sum = 0;
-        for (int i = 0; i < threadSum.size(); i++)
-            sum += threadSum[i];
+        sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.derivExpressions[threadIndex][k]; },
+                data.derivIntegralCache[k], globalValues, data, computedValues, force, context, threads);
         sum /= numInteractions;
         derivatives[k] = 2*M_PI*nPart*nPart*sum;
     }
