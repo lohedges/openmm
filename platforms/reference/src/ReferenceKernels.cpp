@@ -1604,7 +1604,7 @@ void ReferenceCalcCustomNonbondedForceKernel::copyParametersToContext(ContextImp
 
     if (forceCopy != NULL) {
         ThreadPool& threads = extractThreadPool(context);
-        longRangeCorrectionData = CustomNonbondedForceImpl::prepareLongRangeCorrection(force, threads.getNumThreads());
+        CustomNonbondedForceImpl::updateLongRangeCorrection(force, longRangeCorrectionData, threads.getNumThreads());
         CustomNonbondedForceImpl::calcLongRangeCorrection(force, longRangeCorrectionData, context.getOwner(), longRangeCoefficient, longRangeCoefficientDerivs, threads);
         hasInitializedLongRangeCorrection = true;
         *forceCopy = force;

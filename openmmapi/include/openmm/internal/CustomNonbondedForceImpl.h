@@ -70,6 +70,14 @@ public:
      */
     static LongRangeCorrectionData prepareLongRangeCorrection(const CustomNonbondedForce& force, int numThreads);
     /**
+     * Update a LongRangeCorrectionData to reflect changed per-particle parameters.  This
+     * recomputes the particle classes and interaction counts, but reuses the compiled
+     * expressions, which cannot be changed by updateParametersInContext().  It falls back
+     * to prepareLongRangeCorrection() if the data has not been prepared yet, or if a
+     * tabulated function has changed.
+     */
+    static void updateLongRangeCorrection(const CustomNonbondedForce& force, LongRangeCorrectionData& data, int numThreads);
+    /**
      * Compute the coefficient which, when divided by the periodic box volume, gives the
      * long range correction to the energy.  If the Force computes parameter derivatives,
      * also compute the corresponding derivatives of the correction.
@@ -85,13 +93,14 @@ private:
 
 class CustomNonbondedForceImpl::LongRangeCorrectionData {
 public:
-    CustomNonbondedForce::NonbondedMethod method;
+    CustomNonbondedForce::NonbondedMethod method = CustomNonbondedForce::NoCutoff;
     std::vector<std::vector<double> > classes;
     std::vector<std::string> paramNames, computedValueNames;
     std::map<std::pair<int, int>, long long int> interactionCount;
     std::vector<Lepton::CompiledVectorExpression> energyExpression;
     std::vector<std::vector<Lepton::CompiledVectorExpression> > derivExpressions;
     std::vector<Lepton::CompiledExpression> computedValueExpressions;
+    std::vector<int> tabulatedFunctionUpdateCount;
 };
 
 } // namespace OpenMM

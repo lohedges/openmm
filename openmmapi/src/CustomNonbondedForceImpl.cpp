@@ -160,14 +160,16 @@ void CustomNonbondedForceImpl::updateParametersInContext(ContextImpl& context, i
     context.systemChanged();
 }
 
-CustomNonbondedForceImpl::LongRangeCorrectionData CustomNonbondedForceImpl::prepareLongRangeCorrection(const CustomNonbondedForce& force, int numThreads) {
-    LongRangeCorrectionData data;
-    data.method = force.getNonbondedMethod();
-    if (data.method == CustomNonbondedForce::NoCutoff || data.method == CustomNonbondedForce::CutoffNonPeriodic)
-        return data;
-    
+/**
+ * Identify the particle classes and count the interactions between each pair of them.
+ * This is the only part of the long range correction data that depends on the per-particle
+ * parameters, so it is all that needs to be recomputed when they change.
+ */
+static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonbondedForceImpl::LongRangeCorrectionData& data) {
     // Identify all particle classes (defined by parameters), and record the class of each particle.
-    
+
+    data.classes.clear();
+    data.interactionCount.clear();
     int numParticles = force.getNumParticles();
     map<vector<double>, int> classIndex;
     vector<int> atomClass(numParticles);
@@ -222,9 +224,17 @@ CustomNonbondedForceImpl::LongRangeCorrectionData CustomNonbondedForceImpl::prep
                 }
         }
     }
-    
+}
+
+CustomNonbondedForceImpl::LongRangeCorrectionData CustomNonbondedForceImpl::prepareLongRangeCorrection(const CustomNonbondedForce& force, int numThreads) {
+    LongRangeCorrectionData data;
+    data.method = force.getNonbondedMethod();
+    if (data.method == CustomNonbondedForce::NoCutoff || data.method == CustomNonbondedForce::CutoffNonPeriodic)
+        return data;
+    computeParticleClasses(force, data);
+
     // Prepare for evaluating the expressions.
-    
+
     int width = Lepton::CompiledVectorExpression::getAllowedWidths().back();
     map<string, Lepton::CustomFunction*> functions;
     for (int i = 0; i < force.getNumFunctions(); i++)
@@ -250,7 +260,29 @@ CustomNonbondedForceImpl::LongRangeCorrectionData CustomNonbondedForceImpl::prep
         data.computedValueNames.push_back(name+"2");
         data.computedValueExpressions.push_back(Lepton::Parser::parse(exp, functions).createCompiledExpression());
     }
+
+    // Record the state of the tabulated functions, so we can tell whether the expressions
+    // need to be recompiled later.
+
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        data.tabulatedFunctionUpdateCount.push_back(force.getTabulatedFunction(i).getUpdateCount());
     return data;
+}
+
+void CustomNonbondedForceImpl::updateLongRangeCorrection(const CustomNonbondedForce& force, LongRangeCorrectionData& data, int numThreads) {
+    // The compiled expressions depend only on the energy function and the tabulated functions,
+    // neither of which can be changed by updateParametersInContext() (aside from the contents
+    // of a tabulated function).  If they are still valid, we only need to recompute the classes.
+
+    bool canReuse = (!data.energyExpression.empty() && data.method == force.getNonbondedMethod() &&
+                     data.tabulatedFunctionUpdateCount.size() == force.getNumFunctions());
+    for (int i = 0; canReuse && i < force.getNumFunctions(); i++)
+        canReuse = (data.tabulatedFunctionUpdateCount[i] == force.getTabulatedFunction(i).getUpdateCount());
+    if (!canReuse) {
+        data = prepareLongRangeCorrection(force, numThreads);
+        return;
+    }
+    computeParticleClasses(force, data);
 }
 
 void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForce& force, LongRangeCorrectionData& data, const Context& context, double& coefficient, vector<double>& derivatives, ThreadPool& threads) {
