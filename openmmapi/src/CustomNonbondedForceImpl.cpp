@@ -286,48 +286,47 @@ void CustomNonbondedForceImpl::updateLongRangeCorrection(const CustomNonbondedFo
 }
 
 /**
- * The maximum number of integrals to remember.  Each entry is a few dozen bytes, and the
- * cache is only useful while the same classes keep recurring, so there is no point in
- * letting it grow without bound.
+ * The largest number of classes for which integrals are remembered.  The table is
+ * numClasses^2 doubles, so this bounds it at a few tens of MB.  Above this the integrals
+ * are simply recomputed, exactly as they were before the table existed.
  */
-static const size_t MAX_INTEGRAL_CACHE_SIZE = 100000;
-
-static void buildIntegralKey(vector<double>& key, const vector<double>& params1, const vector<double>& params2, const vector<double>& globalValues) {
-    key.clear();
-    key.insert(key.end(), params1.begin(), params1.end());
-    key.insert(key.end(), params2.begin(), params2.end());
-    key.insert(key.end(), globalValues.begin(), globalValues.end());
-}
+static const int MAX_CACHED_CLASSES = 2000;
 
 /**
  * Sum interactionCount*integral over all pairs of classes, reusing integrals computed on
- * earlier calls.  An integral depends only on the parameters of the two classes and the
- * global parameters, so when per-particle parameters change, only the pairs involving a
- * class that is new need to be integrated again.
+ * the previous call.  An integral depends only on the parameters of the two classes and
+ * the global parameters, so when per-particle parameters change, only the pairs involving
+ * a class that was not present before need to be integrated again.
+ *
+ * oldIndex maps each current class to its index on the previous call, or -1 if it is new,
+ * so a reusable integral costs one array lookup.
  */
 double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVectorExpression&(int)>& getExpression,
-        map<vector<double>, double>& cache, const vector<double>& globalValues, LongRangeCorrectionData& data,
-        const vector<vector<double> >& computedValues, const CustomNonbondedForce& force, const Context& context, ThreadPool& threads) {
-    // Look up the integrals we already have, and record which ones are missing.
-
+        const vector<int>& oldIndex, int numOldClasses, const vector<double>& oldIntegrals, vector<double>& newIntegrals,
+        LongRangeCorrectionData& data, const vector<vector<double> >& computedValues, const CustomNonbondedForce& force,
+        const Context& context, ThreadPool& threads) {
     int numClasses = data.classes.size();
+    bool remember = (numClasses <= MAX_CACHED_CLASSES);
+    bool reuse = (!oldIntegrals.empty() && numOldClasses > 0);
+
+    // Collect the integrals we can reuse, and record which ones are missing.
+
     vector<pair<int, int> > pairs;
     vector<double> values;
     vector<int> missing;
-    vector<double> key;
     for (int i = 0; i < numClasses; i++)
         for (int j = i; j < numClasses; j++) {
             if (data.interactionCount.at(make_pair(i, j)) == 0)
                 continue;
-            buildIntegralKey(key, data.classes[i], data.classes[j], globalValues);
-            map<vector<double>, double>::const_iterator entry = cache.find(key);
             pairs.push_back(make_pair(i, j));
-            if (entry == cache.end()) {
-                missing.push_back(pairs.size()-1);
-                values.push_back(0.0);
+            values.push_back(0.0);
+            if (reuse && oldIndex[i] >= 0 && oldIndex[j] >= 0) {
+                int oldI = min(oldIndex[i], oldIndex[j]);
+                int oldJ = max(oldIndex[i], oldIndex[j]);
+                values.back() = oldIntegrals[oldI*numOldClasses+oldJ];
+                continue;
             }
-            else
-                values.push_back(entry->second);
+            missing.push_back(pairs.size()-1);
         }
 
     // Compute the missing integrals in parallel.  Each thread writes to its own elements
@@ -348,19 +347,18 @@ double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVec
     });
     threads.waitForThreads();
 
-    // Record the new integrals and add everything up.
+    // Record the integrals for the next call and add everything up.
 
-    if (cache.size()+missing.size() > MAX_INTEGRAL_CACHE_SIZE)
-        cache.clear();
-    for (int k = 0; k < (int) missing.size(); k++) {
-        int i = pairs[missing[k]].first;
-        int j = pairs[missing[k]].second;
-        buildIntegralKey(key, data.classes[i], data.classes[j], globalValues);
-        cache[key] = values[missing[k]];
-    }
+    if (remember)
+        newIntegrals.assign((size_t) numClasses*numClasses, 0.0);
+    else
+        newIntegrals.clear();
     double sum = 0;
-    for (int k = 0; k < (int) pairs.size(); k++)
+    for (int k = 0; k < (int) pairs.size(); k++) {
         sum += data.interactionCount.at(pairs[k])*values[k];
+        if (remember)
+            newIntegrals[pairs[k].first*numClasses+pairs[k].second] = values[k];
+    }
     return sum;
 }
 
@@ -392,16 +390,32 @@ void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForc
         }
     }
 
-    // Compute the coefficient.  The integrals are computed in parallel, reusing any that
-    // were already computed on an earlier call.
+    // Work out which classes were also present on the previous call.  Their integrals are
+    // unchanged and can be reused.  This costs one lookup per class, not per pair.
 
     vector<double> globalValues;
     for (int i = 0; i < force.getNumGlobalParameters(); i++)
         globalValues.push_back(context.getParameter(force.getGlobalParameterName(i)));
+    int numOldClasses = data.cachedClasses.size();
+    vector<int> oldIndex(numClasses, -1);
+    if (numOldClasses > 0 && data.cachedGlobalValues == globalValues) {
+        map<vector<double>, int> oldClassIndex;
+        for (int i = 0; i < numOldClasses; i++)
+            oldClassIndex[data.cachedClasses[i]] = i;
+        for (int i = 0; i < numClasses; i++) {
+            map<vector<double>, int>::const_iterator entry = oldClassIndex.find(data.classes[i]);
+            if (entry != oldClassIndex.end())
+                oldIndex[i] = entry->second;
+        }
+    }
+
+    // Compute the coefficient.  The integrals are computed in parallel.
+
     double nPart = (double) context.getSystem().getNumParticles();
     double numInteractions = (nPart*(nPart+1))/2;
+    vector<double> newIntegrals;
     double sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.energyExpression[threadIndex]; },
-            data.integralCache, globalValues, data, computedValues, force, context, threads);
+            oldIndex, numOldClasses, data.cachedIntegrals, newIntegrals, data, computedValues, force, context, threads);
     sum /= numInteractions;
     coefficient = 2*M_PI*nPart*nPart*sum;
 
@@ -409,13 +423,22 @@ void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForc
 
     int numDerivs = data.derivExpressions[0].size();
     derivatives.resize(numDerivs);
-    data.derivIntegralCache.resize(numDerivs);
+    data.cachedDerivIntegrals.resize(numDerivs);
+    vector<vector<double> > newDerivIntegrals(numDerivs);
     for (int k = 0; k < numDerivs; k++) {
         sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.derivExpressions[threadIndex][k]; },
-                data.derivIntegralCache[k], globalValues, data, computedValues, force, context, threads);
+                oldIndex, numOldClasses, data.cachedDerivIntegrals[k], newDerivIntegrals[k], data, computedValues, force, context, threads);
         sum /= numInteractions;
         derivatives[k] = 2*M_PI*nPart*nPart*sum;
     }
+
+    // Remember what we computed, for the next call.
+
+    data.cachedClasses = data.classes;
+    data.cachedGlobalValues = globalValues;
+    data.cachedIntegrals.swap(newIntegrals);
+    for (int k = 0; k < numDerivs; k++)
+        data.cachedDerivIntegrals[k].swap(newDerivIntegrals[k]);
 }
 
 double CustomNonbondedForceImpl::integrateInteraction(Lepton::CompiledVectorExpression& expression, const vector<double>& params1, const vector<double>& params2,

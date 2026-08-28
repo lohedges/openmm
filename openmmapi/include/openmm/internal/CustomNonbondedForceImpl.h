@@ -86,8 +86,9 @@ public:
     static void calcLongRangeCorrection(const CustomNonbondedForce& force, LongRangeCorrectionData& data, const Context& context, double& coefficient, std::vector<double>& derivatives, ThreadPool& threads);
 private:
     static double sumIntegrals(const std::function<Lepton::CompiledVectorExpression&(int)>& getExpression,
-            std::map<std::vector<double>, double>& cache, const std::vector<double>& globalValues, LongRangeCorrectionData& data,
-            const std::vector<std::vector<double> >& computedValues, const CustomNonbondedForce& force, const Context& context, ThreadPool& threads);
+            const std::vector<int>& oldIndex, int numOldClasses, const std::vector<double>& oldIntegrals,
+            std::vector<double>& newIntegrals, LongRangeCorrectionData& data, const std::vector<std::vector<double> >& computedValues,
+            const CustomNonbondedForce& force, const Context& context, ThreadPool& threads);
     static double integrateInteraction(Lepton::CompiledVectorExpression& expression, const std::vector<double>& params1, const std::vector<double>& params2,
             const std::vector<double>& computedValues1, const std::vector<double>& computedValues2, const CustomNonbondedForce& force, const Context& context,
             const std::vector<std::string>& paramNames, const std::vector<std::string>& computedValueNames);
@@ -106,11 +107,14 @@ public:
     std::vector<Lepton::CompiledExpression> computedValueExpressions;
     std::vector<int> tabulatedFunctionUpdateCount;
     /**
-     * Integrals computed on earlier calls, indexed by the parameters they depend on:
-     * the parameters of the two classes followed by the global parameter values.
+     * The classes, global parameter values and integrals from the previous call, so that
+     * the integrals for pairs of classes that have not changed can be reused.  The
+     * integrals are stored as a numClasses x numClasses table, upper triangle only.
      */
-    std::map<std::vector<double>, double> integralCache;
-    std::vector<std::map<std::vector<double>, double> > derivIntegralCache;
+    std::vector<std::vector<double> > cachedClasses;
+    std::vector<double> cachedGlobalValues;
+    std::vector<double> cachedIntegrals;
+    std::vector<std::vector<double> > cachedDerivIntegrals;
 };
 
 } // namespace OpenMM
