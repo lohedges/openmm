@@ -71,26 +71,27 @@ class TestAutoDetectLRCNonbonded(_LRCTestBase):
 
     def setUp(self):
         self.force1 = self._make_force()
-        self.force2 = self._make_force()
         self.context1 = self._make_context(self.force1)
-        self.context2 = self._make_context(self.force2)
 
     def test_charge_only_update_preserves_lrc(self):
         """
-        Updating only charges auto-detects no LJ change; energies in two
-        otherwise identical contexts must agree after the update.
+        Updating only charges must not change the dispersion correction; the
+        energy must match a freshly initialized context with those charges.
         """
         for i in range(self.NUM_PARTICLES):
             charge, sigma, epsilon = self.force1.getParticleParameters(i)
             self.force1.setParticleParameters(i, charge * 0.5, sigma, epsilon)
-            self.force2.setParticleParameters(i, charge * 0.5, sigma, epsilon)
-
         self.force1.updateParametersInContext(self.context1)
-        self.force2.updateParametersInContext(self.context2)
+        e_updated = self.context1.getState(getEnergy=True).getPotentialEnergy()._value
 
-        e1 = self.context1.getState(getEnergy=True).getPotentialEnergy()._value
-        e2 = self.context2.getState(getEnergy=True).getPotentialEnergy()._value
-        self.assertAlmostEqual(e1, e2, places=5)
+        force_ref = self._make_force()
+        for i in range(self.NUM_PARTICLES):
+            charge, sigma, epsilon = force_ref.getParticleParameters(i)
+            force_ref.setParticleParameters(i, charge * 0.5, sigma, epsilon)
+        ctx_ref = self._make_context(force_ref)
+        e_ref = ctx_ref.getState(getEnergy=True).getPotentialEnergy()._value
+
+        self.assertAlmostEqual(e_ref, e_updated, places=5)
 
     def test_lj_update_recomputes_lrc(self):
         """
