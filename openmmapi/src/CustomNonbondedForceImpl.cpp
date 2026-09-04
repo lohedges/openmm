@@ -165,6 +165,18 @@ void CustomNonbondedForceImpl::updateParametersInContext(ContextImpl& context, i
  * This is the only part of the long range correction data that depends on the per-particle
  * parameters, so it is all that needs to be recomputed when they change.
  */
+/**
+ * Index into a packed table holding the upper triangle of a numClasses x numClasses
+ * matrix, for i <= j.
+ */
+static size_t triangularIndex(int i, int j, int numClasses) {
+    return (size_t) i*numClasses - ((size_t) i*(i-1))/2 + (j-i);
+}
+
+static size_t triangularSize(int numClasses) {
+    return ((size_t) numClasses*(numClasses+1))/2;
+}
+
 static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonbondedForceImpl::LongRangeCorrectionData& data) {
     // Identify all particle classes (defined by parameters), and record the class of each particle.
 
@@ -188,7 +200,7 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
 
     // Count the total number of particle pairs for each pair of classes.
 
-    data.interactionCount.assign((size_t) numClasses*numClasses, 0);
+    data.interactionCount.assign(triangularSize(numClasses), 0);
     if (force.getNumInteractionGroups() == 0) {
         // Count the particles of each class.
 
@@ -196,9 +208,9 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
         for (int i = 0; i < numParticles; i++)
             classCounts[atomClass[i]]++;
         for (int i = 0; i < numClasses; i++) {
-            data.interactionCount[(size_t) i*numClasses+i] = (classCounts[i]*(classCounts[i]+1))/2;
+            data.interactionCount[triangularIndex(i, i, numClasses)] = (classCounts[i]*(classCounts[i]+1))/2;
             for (int j = i+1; j < numClasses; j++)
-                data.interactionCount[(size_t) i*numClasses+j] = classCounts[i]*classCounts[j];
+                data.interactionCount[triangularIndex(i, j, numClasses)] = classCounts[i]*classCounts[j];
         }
     }
     else {
@@ -213,7 +225,7 @@ static void computeParticleClasses(const CustomNonbondedForce& force, CustomNonb
                         continue;
                     int class1 = atomClass[*a1];
                     int class2 = atomClass[*a2];
-                    data.interactionCount[(size_t) min(class1, class2)*numClasses+max(class1, class2)]++;
+                    data.interactionCount[triangularIndex(min(class1, class2), max(class1, class2), numClasses)]++;
                 }
         }
     }
@@ -279,11 +291,12 @@ void CustomNonbondedForceImpl::updateLongRangeCorrection(const CustomNonbondedFo
 }
 
 /**
- * The largest number of classes for which integrals are remembered.  The table is
- * numClasses^2 doubles, so this bounds it at a few tens of MB.  Above this the integrals
- * are simply recomputed, exactly as they were before the table existed.
+ * The most memory to spend on remembering integrals.  There is one table for the energy
+ * and one for each energy parameter derivative, so the number of classes this allows for
+ * depends on how many of those there are.  Beyond it the integrals are simply recomputed,
+ * exactly as they were before the tables existed.
  */
-static const int MAX_CACHED_CLASSES = 2000;
+static const size_t MAX_CACHE_BYTES = 64*1024*1024;
 
 /**
  * Sum interactionCount*integral over all pairs of classes, reusing integrals computed on
@@ -296,10 +309,9 @@ static const int MAX_CACHED_CLASSES = 2000;
  */
 double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVectorExpression&(int)>& getExpression,
         const vector<int>& oldIndex, int numOldClasses, const vector<double>& oldIntegrals, vector<double>& newIntegrals,
-        LongRangeCorrectionData& data, const vector<vector<double> >& computedValues, const CustomNonbondedForce& force,
-        const Context& context, ThreadPool& threads) {
+        bool remember, LongRangeCorrectionData& data, const vector<vector<double> >& computedValues,
+        const CustomNonbondedForce& force, const Context& context, ThreadPool& threads) {
     int numClasses = data.classes.size();
-    bool remember = (numClasses <= MAX_CACHED_CLASSES);
     bool reuse = (!oldIntegrals.empty() && numOldClasses > 0);
 
     // Collect the integrals we can reuse, and record which ones are missing.
@@ -309,14 +321,14 @@ double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVec
     vector<int> missing;
     for (int i = 0; i < numClasses; i++)
         for (int j = i; j < numClasses; j++) {
-            if (data.interactionCount[(size_t) i*numClasses+j] == 0)
+            if (data.interactionCount[triangularIndex(i, j, numClasses)] == 0)
                 continue;
             pairs.push_back(make_pair(i, j));
             values.push_back(0.0);
             if (reuse && oldIndex[i] >= 0 && oldIndex[j] >= 0) {
                 int oldI = min(oldIndex[i], oldIndex[j]);
                 int oldJ = max(oldIndex[i], oldIndex[j]);
-                values.back() = oldIntegrals[(size_t) oldI*numOldClasses+oldJ];
+                values.back() = oldIntegrals[triangularIndex(oldI, oldJ, numOldClasses)];
                 continue;
             }
             missing.push_back(pairs.size()-1);
@@ -343,12 +355,12 @@ double CustomNonbondedForceImpl::sumIntegrals(const function<Lepton::CompiledVec
     // Record the integrals for the next call and add everything up.
 
     if (remember)
-        newIntegrals.assign((size_t) numClasses*numClasses, 0.0);
+        newIntegrals.assign(triangularSize(numClasses), 0.0);
     else
         newIntegrals.clear();
     double sum = 0;
     for (int k = 0; k < (int) pairs.size(); k++) {
-        size_t index = (size_t) pairs[k].first*numClasses+pairs[k].second;
+        size_t index = triangularIndex(pairs[k].first, pairs[k].second, numClasses);
         sum += data.interactionCount[index]*values[k];
         if (remember)
             newIntegrals[index] = values[k];
@@ -403,25 +415,32 @@ void CustomNonbondedForceImpl::calcLongRangeCorrection(const CustomNonbondedForc
         }
     }
 
+    // Decide whether to remember the integrals for the next call.  There is one table for
+    // the energy and one for each parameter derivative, and they are held to a fixed
+    // budget between them.
+
+    int numDerivs = data.derivExpressions[0].size();
+    size_t tableBytes = triangularSize(numClasses)*sizeof(double)*(numDerivs+1);
+    bool remember = (tableBytes <= MAX_CACHE_BYTES);
+
     // Compute the coefficient.  The integrals are computed in parallel.
 
     double nPart = (double) context.getSystem().getNumParticles();
     double numInteractions = (nPart*(nPart+1))/2;
     vector<double> newIntegrals;
     double sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.energyExpression[threadIndex]; },
-            oldIndex, numOldClasses, data.cachedIntegrals, newIntegrals, data, computedValues, force, context, threads);
+            oldIndex, numOldClasses, data.cachedIntegrals, newIntegrals, remember, data, computedValues, force, context, threads);
     sum /= numInteractions;
     coefficient = 2*M_PI*nPart*nPart*sum;
 
     // Now do the same for parameter derivatives.
 
-    int numDerivs = data.derivExpressions[0].size();
     derivatives.resize(numDerivs);
     data.cachedDerivIntegrals.resize(numDerivs);
     vector<vector<double> > newDerivIntegrals(numDerivs);
     for (int k = 0; k < numDerivs; k++) {
         sum = sumIntegrals([&] (int threadIndex) -> Lepton::CompiledVectorExpression& { return data.derivExpressions[threadIndex][k]; },
-                oldIndex, numOldClasses, data.cachedDerivIntegrals[k], newDerivIntegrals[k], data, computedValues, force, context, threads);
+                oldIndex, numOldClasses, data.cachedDerivIntegrals[k], newDerivIntegrals[k], remember, data, computedValues, force, context, threads);
         sum /= numInteractions;
         derivatives[k] = 2*M_PI*nPart*nPart*sum;
     }

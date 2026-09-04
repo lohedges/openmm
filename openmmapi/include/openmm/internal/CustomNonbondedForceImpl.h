@@ -87,8 +87,9 @@ public:
 private:
     static double sumIntegrals(const std::function<Lepton::CompiledVectorExpression&(int)>& getExpression,
             const std::vector<int>& oldIndex, int numOldClasses, const std::vector<double>& oldIntegrals,
-            std::vector<double>& newIntegrals, LongRangeCorrectionData& data, const std::vector<std::vector<double> >& computedValues,
-            const CustomNonbondedForce& force, const Context& context, ThreadPool& threads);
+            std::vector<double>& newIntegrals, bool remember, LongRangeCorrectionData& data,
+            const std::vector<std::vector<double> >& computedValues, const CustomNonbondedForce& force,
+            const Context& context, ThreadPool& threads);
     static double integrateInteraction(Lepton::CompiledVectorExpression& expression, const std::vector<double>& params1, const std::vector<double>& params2,
             const std::vector<double>& computedValues1, const std::vector<double>& computedValues2, const CustomNonbondedForce& force, const Context& context,
             const std::vector<std::string>& paramNames, const std::vector<std::string>& computedValueNames);
@@ -103,7 +104,7 @@ public:
     std::vector<std::string> paramNames, computedValueNames;
     /**
      * The number of particle pairs for each pair of classes, stored as a
-     * numClasses x numClasses table, upper triangle only.
+     * packed upper triangle of a numClasses x numClasses table.
      */
     std::vector<long long int> interactionCount;
     std::vector<Lepton::CompiledVectorExpression> energyExpression;
@@ -113,7 +114,7 @@ public:
     /**
      * The classes, global parameter values and integrals from the previous call, so that
      * the integrals for pairs of classes that have not changed can be reused.  The
-     * integrals are stored as a numClasses x numClasses table, upper triangle only.
+     * integrals are stored as a packed upper triangle of a numClasses x numClasses table.
      */
     std::vector<std::vector<double> > cachedClasses;
     std::vector<double> cachedGlobalValues;
