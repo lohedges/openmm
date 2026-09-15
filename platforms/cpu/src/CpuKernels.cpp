@@ -1383,7 +1383,7 @@ void CpuCalcCustomNonbondedForceKernel::copyParametersToContext(ContextImpl& con
     // If necessary, recompute the long range correction.
     
     if (forceCopy != NULL) {
-        longRangeCorrectionData = CustomNonbondedForceImpl::prepareLongRangeCorrection(force, data.threads.getNumThreads());
+        CustomNonbondedForceImpl::updateLongRangeCorrection(force, longRangeCorrectionData, data.threads.getNumThreads());
         CustomNonbondedForceImpl::calcLongRangeCorrection(force, longRangeCorrectionData, context.getOwner(), longRangeCoefficient, longRangeCoefficientDerivs, data.threads);
         hasInitializedLongRangeCorrection = true;
         delete forceCopy;

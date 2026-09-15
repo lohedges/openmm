@@ -754,7 +754,7 @@ void CommonCalcCustomNonbondedForceKernel::copyParametersToContext(ContextImpl& 
     // If necessary, recompute the long range correction.
 
     if (forceCopy != NULL) {
-        longRangeCorrectionData = CustomNonbondedForceImpl::prepareLongRangeCorrection(force, cc.getThreadPool().getNumThreads());
+        CustomNonbondedForceImpl::updateLongRangeCorrection(force, longRangeCorrectionData, cc.getThreadPool().getNumThreads());
         hasInitializedLongRangeCorrection = false;
         delete forceCopy;
         forceCopy = XmlSerializer::clone(force);

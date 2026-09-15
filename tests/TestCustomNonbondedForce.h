@@ -1067,6 +1067,110 @@ void testLargeInteractionGroup() {
     ASSERT_EQUAL(0.0, state4.getPotentialEnergy());
 }
 
+CustomNonbondedForce* createLongRangeSystem(System& system, vector<Vec3>& positions, const vector<vector<double> >& params) {
+    int gridSize = 5;
+    double boxSize = gridSize*0.7;
+    CustomNonbondedForce* nonbonded = new CustomNonbondedForce("4*eps*((sigma/r)^12-(sigma/r)^6); sigma=0.5*(sigma1+sigma2); eps=sqrt(eps1*eps2)");
+    nonbonded->addPerParticleParameter("sigma");
+    nonbonded->addPerParticleParameter("eps");
+    nonbonded->setNonbondedMethod(CustomNonbondedForce::CutoffPeriodic);
+    nonbonded->setCutoffDistance(boxSize/3);
+    nonbonded->setUseLongRangeCorrection(true);
+    positions.resize(gridSize*gridSize*gridSize);
+    int index = 0;
+    for (int i = 0; i < gridSize; i++)
+        for (int j = 0; j < gridSize; j++)
+            for (int k = 0; k < gridSize; k++) {
+                system.addParticle(1.0);
+                nonbonded->addParticle(params[index%params.size()]);
+                positions[index] = Vec3(i*boxSize/gridSize, j*boxSize/gridSize, k*boxSize/gridSize);
+                index++;
+            }
+    system.setDefaultPeriodicBoxVectors(Vec3(boxSize, 0, 0), Vec3(0, boxSize, 0), Vec3(0, 0, boxSize));
+    system.addForce(nonbonded);
+    return nonbonded;
+}
+
+double longRangeEnergy(const vector<vector<double> >& params) {
+    System system;
+    vector<Vec3> positions;
+    createLongRangeSystem(system, positions, params);
+    VerletIntegrator integrator(0.01);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    return context.getState(State::Energy).getPotentialEnergy();
+}
+
+void testLongRangeCorrectionAfterUpdate() {
+    vector<vector<double> > params1 = {{1.1, 0.5}, {1.0, 1.0}};
+    vector<vector<double> > params2 = {{0.9, 0.8}, {1.2, 0.3}};
+    System system;
+    vector<Vec3> positions;
+    CustomNonbondedForce* nonbonded = createLongRangeSystem(system, positions, params1);
+    VerletIntegrator integrator(0.01);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    ASSERT_EQUAL_TOL(longRangeEnergy(params1), context.getState(State::Energy).getPotentialEnergy(), TOL);
+
+    // Change the per-particle parameters and make sure the correction is updated.
+
+    for (int i = 0; i < nonbonded->getNumParticles(); i++)
+        nonbonded->setParticleParameters(i, params2[i%params2.size()]);
+    nonbonded->updateParametersInContext(context);
+    ASSERT_EQUAL_TOL(longRangeEnergy(params2), context.getState(State::Energy).getPotentialEnergy(), TOL);
+
+    // Repeatedly change them back and forth, in case anything is cached between updates.
+
+    for (int step = 0; step < 5; step++) {
+        for (int i = 0; i < nonbonded->getNumParticles(); i++)
+            nonbonded->setParticleParameters(i, params1[i%params1.size()]);
+        nonbonded->updateParametersInContext(context);
+        ASSERT_EQUAL_TOL(longRangeEnergy(params1), context.getState(State::Energy).getPotentialEnergy(), TOL);
+        for (int i = 0; i < nonbonded->getNumParticles(); i++)
+            nonbonded->setParticleParameters(i, params2[i%params2.size()]);
+        nonbonded->updateParametersInContext(context);
+        ASSERT_EQUAL_TOL(longRangeEnergy(params2), context.getState(State::Energy).getPotentialEnergy(), TOL);
+    }
+}
+
+void testLongRangeCorrectionDerivativesAfterUpdate() {
+    int gridSize = 5;
+    double boxSize = gridSize*0.7;
+    vector<double> params1(1, 0.5), params2(1, 1.2);
+    System system;
+    VerletIntegrator integrator(0.01);
+    CustomNonbondedForce* nonbonded = new CustomNonbondedForce("k*eps1*eps2/r^6");
+    nonbonded->addPerParticleParameter("eps");
+    nonbonded->addGlobalParameter("k", 2.0);
+    nonbonded->addEnergyParameterDerivative("k");
+    nonbonded->setNonbondedMethod(CustomNonbondedForce::CutoffPeriodic);
+    nonbonded->setCutoffDistance(boxSize/3);
+    nonbonded->setUseLongRangeCorrection(true);
+    vector<Vec3> positions(gridSize*gridSize*gridSize);
+    int index = 0;
+    for (int i = 0; i < gridSize; i++)
+        for (int j = 0; j < gridSize; j++)
+            for (int k = 0; k < gridSize; k++) {
+                system.addParticle(1.0);
+                nonbonded->addParticle(index%2 == 0 ? params1 : params2);
+                positions[index] = Vec3(i*boxSize/gridSize, j*boxSize/gridSize, k*boxSize/gridSize);
+                index++;
+            }
+    system.setDefaultPeriodicBoxVectors(Vec3(boxSize, 0, 0), Vec3(0, boxSize, 0), Vec3(0, 0, boxSize));
+    system.addForce(nonbonded);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    context.getState(State::ParameterDerivatives);
+
+    // The energy is linear in k, so the derivative must equal the energy divided by k.
+
+    for (int i = 0; i < nonbonded->getNumParticles(); i++)
+        nonbonded->setParticleParameters(i, i%2 == 0 ? params2 : params1);
+    nonbonded->updateParametersInContext(context);
+    State state = context.getState(State::Energy | State::ParameterDerivatives);
+    ASSERT_EQUAL_TOL(state.getPotentialEnergy()/2.0, state.getEnergyParameterDerivatives().at("k"), TOL);
+}
+
 void testInteractionGroupLongRangeCorrection() {
     const int numParticles = 10;
     const double boxSize = 10.0;
@@ -1605,6 +1709,8 @@ int main(int argc, char* argv[]) {
         testCoulombLennardJones();
         testSwitchingFunction();
         testLongRangeCorrection();
+        testLongRangeCorrectionAfterUpdate();
+        testLongRangeCorrectionDerivativesAfterUpdate();
         testInteractionGroups();
         testLargeInteractionGroup();
         testInteractionGroupLongRangeCorrection();
