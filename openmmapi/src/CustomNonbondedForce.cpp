@@ -65,6 +65,32 @@ CustomNonbondedForce::CustomNonbondedForce(const CustomNonbondedForce& rhs) : nu
         functions.push_back(FunctionInfo(it->name, it->function->Copy()));
 }
 
+CustomNonbondedForce& CustomNonbondedForce::operator=(const CustomNonbondedForce& rhs) {
+    if (this == &rhs)
+        return *this;
+    setForceGroup(rhs.getForceGroup());
+    setName(rhs.getName());
+    energyExpression = rhs.energyExpression;
+    nonbondedMethod = rhs.nonbondedMethod;
+    cutoffDistance = rhs.cutoffDistance;
+    switchingDistance = rhs.switchingDistance;
+    useSwitchingFunction = rhs.useSwitchingFunction;
+    useLongRangeCorrection = rhs.useLongRangeCorrection;
+    parameters = rhs.parameters;
+    globalParameters = rhs.globalParameters;
+    computedValues = rhs.computedValues;
+    energyParameterDerivatives = rhs.energyParameterDerivatives;
+    particles = rhs.particles;
+    exclusions = rhs.exclusions;
+    interactionGroups = rhs.interactionGroups;
+    for (auto function : functions)
+        delete function.function;
+    functions.clear();
+    for (vector<FunctionInfo>::const_iterator it = rhs.functions.begin(); it != rhs.functions.end(); ++it)
+        functions.push_back(FunctionInfo(it->name, it->function->Copy()));
+    return *this;
+}
+
 CustomNonbondedForce::~CustomNonbondedForce() {
     for (auto function : functions)
         delete function.function;

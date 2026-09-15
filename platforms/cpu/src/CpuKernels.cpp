@@ -45,7 +45,6 @@
 #include "openmm/internal/NonbondedForceImpl.h"
 #include "openmm/internal/ConstantPotentialForceImpl.h"
 #include "openmm/internal/vectorize.h"
-#include "openmm/serialization/XmlSerializer.h"
 #include "lepton/CompiledExpression.h"
 #include "lepton/CustomFunction.h"
 #include "lepton/Operation.h"
@@ -1233,7 +1232,7 @@ void CpuCalcCustomNonbondedForceKernel::initialize(const System& system, const C
     // Record information for the long range correction.
 
     if (force.getNonbondedMethod() == CustomNonbondedForce::CutoffPeriodic && force.getUseLongRangeCorrection()) {
-        forceCopy = XmlSerializer::clone(force);
+        forceCopy = new CustomNonbondedForce(force);
         hasInitializedLongRangeCorrection = false;
     }
     else {
@@ -1386,8 +1385,7 @@ void CpuCalcCustomNonbondedForceKernel::copyParametersToContext(ContextImpl& con
         CustomNonbondedForceImpl::updateLongRangeCorrection(force, longRangeCorrectionData, data.threads.getNumThreads());
         CustomNonbondedForceImpl::calcLongRangeCorrection(force, longRangeCorrectionData, context.getOwner(), longRangeCoefficient, longRangeCoefficientDerivs, data.threads);
         hasInitializedLongRangeCorrection = true;
-        delete forceCopy;
-        forceCopy = XmlSerializer::clone(force);
+        *forceCopy = force;
     }
 
     // See if any tabulated functions have changed.

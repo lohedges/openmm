@@ -734,6 +734,48 @@ void testParticleTypes() {
     ASSERT_EQUAL(12.0, state.getPotentialEnergy());
 }
 
+void testTabulatedFunctionWithLongRangeCorrection() {
+    // With the long range correction enabled the kernel keeps its own copy of the force,
+    // which must deep copy the tabulated functions so that the two can be freed separately.
+
+    System system;
+    system.setDefaultPeriodicBoxVectors(Vec3(3, 0, 0), Vec3(0, 3, 0), Vec3(0, 0, 3));
+    for (int i = 0; i < 8; i++)
+        system.addParticle(1.0);
+    VerletIntegrator integrator(0.01);
+    CustomNonbondedForce* force = new CustomNonbondedForce("fn(type1)*fn(type2)/r^6");
+    force->addPerParticleParameter("type");
+    force->addTabulatedFunction("fn", new Discrete1DFunction({1.0, 2.0}));
+    for (int i = 0; i < 8; i++)
+        force->addParticle({(double) (i%2)});
+    force->setNonbondedMethod(CustomNonbondedForce::CutoffPeriodic);
+    force->setCutoffDistance(1.0);
+    force->setUseLongRangeCorrection(true);
+    system.addForce(force);
+    vector<Vec3> positions;
+    for (int i = 0; i < 8; i++)
+        positions.push_back(Vec3(0.4*i, 0, 0));
+    {
+        Context context(system, integrator, platform);
+        context.setPositions(positions);
+        double energy1 = context.getState(State::Energy).getPotentialEnergy();
+        force->updateParametersInContext(context);
+        ASSERT_EQUAL_TOL(energy1, context.getState(State::Energy).getPotentialEnergy(), 1e-6);
+        dynamic_cast<Discrete1DFunction&>(force->getTabulatedFunction(0)).setFunctionParameters({3.0, 0.5});
+        force->updateParametersInContext(context);
+        double energy2 = context.getState(State::Energy).getPotentialEnergy();
+        ASSERT(energy2 != energy1);
+    }
+
+    // The Context has now been destroyed, and so has the kernel's copy.  The force must
+    // still own valid tabulated functions.
+
+    vector<double> values;
+    dynamic_cast<Discrete1DFunction&>(force->getTabulatedFunction(0)).getFunctionParameters(values);
+    ASSERT_EQUAL(2, values.size());
+    ASSERT_EQUAL(3.0, values[0]);
+}
+
 void testCoulombLennardJones() {
     const int numMolecules = 300;
     const int numParticles = numMolecules*2;
@@ -1706,6 +1748,7 @@ int main(int argc, char* argv[]) {
         testDiscrete2DFunction();
         testDiscrete3DFunction();
         testParticleTypes();
+        testTabulatedFunctionWithLongRangeCorrection();
         testCoulombLennardJones();
         testSwitchingFunction();
         testLongRangeCorrection();

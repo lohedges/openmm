@@ -97,6 +97,7 @@ class WrapperGenerator:
                             'bool OpenMM::Discrete1DFunction::operator!=',
                             'bool OpenMM::Discrete2DFunction::operator!=',
                             'bool OpenMM::Discrete3DFunction::operator!=',
+                            'CustomNonbondedForce& OpenMM::CustomNonbondedForce::operator=',
                             'const std::map<int, int>& OpenMM::DPDIntegrator::getParticleTypes',
                             'const std::map<int, int>& OpenMM::QTBIntegrator::getParticleTypes',
                             'const std::map<int, double>& OpenMM::QTBIntegrator::getTypeAdaptationRates'

@@ -201,6 +201,7 @@ public:
      */
     explicit CustomNonbondedForce(const std::string& energy);
     CustomNonbondedForce(const CustomNonbondedForce& rhs); // copy constructor
+    CustomNonbondedForce& operator=(const CustomNonbondedForce& rhs);
     ~CustomNonbondedForce();
     /**
      * Get the number of particles for which force field parameters have been defined.
