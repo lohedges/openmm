@@ -268,6 +268,83 @@ void testUpdateConstraintsMatchesNewContext() {
         ASSERT_EQUAL_VEC(state2.getPositions()[i], state1.getPositions()[i], 1e-4);
 }
 
+/**
+ * Build a system of three atom clusters whose three distances are nearly equal, so that
+ * which pair of them is equal can be changed without moving the atoms very far.  A water
+ * like cluster is too lopsided for that: swapping which pair is equal would mean moving
+ * an atom by more than half a bond length, which no constraint algorithm is expected to
+ * reconcile in one step.
+ */
+void buildNearEquilateralClusters(System& system, vector<Vec3>& positions, vector<int>& constraints) {
+    for (int i = 0; i < 4; i++) {
+        int first = system.getNumParticles();
+        for (int j = 0; j < 3; j++)
+            system.addParticle(12.0);
+        Vec3 base(0.5*i, 0, 0);
+        positions.push_back(base);
+        positions.push_back(base+Vec3(0.1, 0, 0));
+        positions.push_back(base+Vec3(0.04592, 0.08883, 0));
+        constraints.push_back(system.addConstraint(first, first+1, 0.1));
+        constraints.push_back(system.addConstraint(first, first+2, 0.1));
+        constraints.push_back(system.addConstraint(first+1, first+2, 0.104));
+    }
+    system.setDefaultPeriodicBoxVectors(Vec3(5, 0, 0), Vec3(0, 5, 0), Vec3(0, 0, 5));
+}
+
+void testSettleCentralAtomChanges() {
+    // Which atom of a SETTLE cluster is treated as the central one depends on which pair
+    // of its three distances are equal.  Making a different pair equal changes that, so
+    // the cluster has to be rebuilt rather than updated in place.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> constraints;
+    buildNearEquilateralClusters(system, positions, constraints);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    verifyConstraints(system, context, 1e-4);
+
+    // Each cluster starts as (0.1, 0.1, 0.104), so the first atom is central.  Make the
+    // second and third distances equal instead, so the third atom becomes central.
+
+    int p1, p2;
+    double distance;
+    system.getConstraintParameters(constraints[1], p1, p2, distance);
+    system.setConstraintParameters(constraints[1], p1, p2, 0.104);
+    context.updateConstraintsInContext();
+    verifyConstraints(system, context, 1e-4);
+
+    integrator.step(20);
+    verifyConstraints(system, context, 1e-4);
+}
+
+void testSettleClusterBecomesUnhandleable() {
+    // If no two of a cluster's distances are equal it cannot be handled by SETTLE at all,
+    // and those constraints have to move to another algorithm.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> constraints;
+    buildNearEquilateralClusters(system, positions, constraints);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    verifyConstraints(system, context, 1e-4);
+
+    // Make all three distances different from each other.
+
+    int p1, p2;
+    double distance;
+    system.getConstraintParameters(constraints[1], p1, p2, distance);
+    system.setConstraintParameters(constraints[1], p1, p2, 0.102);
+    context.updateConstraintsInContext();
+    verifyConstraints(system, context, 1e-4);
+
+    integrator.step(20);
+    verifyConstraints(system, context, 1e-4);
+}
+
 void testChangingParticles() {
     // Changing which particles a constraint connects cannot be applied in place, so it
     // has to fall back to rebuilding.  The result must still be correct.
@@ -306,6 +383,8 @@ int main(int argc, char* argv[]) {
         testUpdateConstraintsPreservesState();
         testUpdateConstraintsRequiringRebuild();
         testUpdateConstraintsMatchesNewContext();
+        testSettleCentralAtomChanges();
+        testSettleClusterBecomesUnhandleable();
         testChangingParticles();
         runPlatformTests();
     }
