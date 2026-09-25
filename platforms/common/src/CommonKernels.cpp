@@ -454,6 +454,14 @@ void CommonApplyConstraintsKernel::applyToVelocities(ContextImpl& context, doubl
     cc.getIntegrationUtilities().applyVelocityConstraints(tol);
 }
 
+void CommonUpdateConstraintsKernel::initialize(const System& system) {
+}
+
+bool CommonUpdateConstraintsKernel::updateConstraints(ContextImpl& context, const System& system) {
+    ContextSelector selector(cc);
+    return cc.getIntegrationUtilities().updateConstraints(system);
+}
+
 void CommonVirtualSitesKernel::initialize(const System& system) {
 }
 
