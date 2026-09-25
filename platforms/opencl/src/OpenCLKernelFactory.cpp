@@ -80,6 +80,8 @@ KernelImpl* OpenCLKernelFactory::createKernelImpl(std::string name, const Platfo
         return new CommonUpdateStateDataKernel(name, platform, cl);
     if (name == ApplyConstraintsKernel::Name())
         return new CommonApplyConstraintsKernel(name, platform, cl);
+    if (name == UpdateConstraintsKernel::Name())
+        return new CommonUpdateConstraintsKernel(name, platform, cl);
     if (name == VirtualSitesKernel::Name())
         return new CommonVirtualSitesKernel(name, platform, cl);
     if (name == MinimizeKernel::Name())
