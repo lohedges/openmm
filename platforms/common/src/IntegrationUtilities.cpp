@@ -40,9 +40,27 @@
 using namespace OpenMM;
 using namespace std;
 
+/**
+ * Identify which atom of a SETTLE cluster is the central one, based on which pair of the
+ * three distances are equal.  Returns 0, 1 or 2 for the first, second or third atom, or
+ * -1 if the cluster cannot be handled by SETTLE.  The distances are compared as floats,
+ * since that is the precision they are stored in when the clusters are built.
+ */
+static int findSettleCentralAtom(double dist12, double dist13, double dist23) {
+    float d12 = (float) dist12, d13 = (float) dist13, d23 = (float) dist23;
+    if (d12 == d13)
+        return 0;
+    if (d12 == d23)
+        return 1;
+    if (d13 == d23)
+        return 2;
+    return -1;
+}
+
 struct IntegrationUtilities::ShakeCluster {
     int centralID;
     int peripheralID[3];
+    int constraintIdx[3];
     int size;
     bool valid;
     double distance;
@@ -51,10 +69,11 @@ struct IntegrationUtilities::ShakeCluster {
     }
     ShakeCluster(int centralID, double invMass) : centralID(centralID), centralInvMass(invMass), size(0), valid(true) {
     }
-    void addAtom(int id, double dist, double invMass) {
+    void addAtom(int id, double dist, double invMass, int constraint) {
         if (size == 3 || (size > 0 && abs(dist-distance)/distance > 1e-8) || (size > 0 && abs(invMass-peripheralInvMass)/peripheralInvMass > 1e-8))
             valid = false;
         else {
+            constraintIdx[size] = constraint;
             peripheralID[size++] = id;
             distance = dist;
             peripheralInvMass = invMass;
@@ -119,18 +138,27 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
     vector<int> atom1;
     vector<int> atom2;
     vector<double> distance;
+    vector<int> constraintIndex;
     vector<int> constraintCount(context.getNumAtoms(), 0);
+    constraintDistance.resize(system.getNumConstraints());
+    constraintLocation.resize(system.getNumConstraints());
     for (int i = 0; i < system.getNumConstraints(); i++) {
         int p1, p2;
         double d;
         system.getConstraintParameters(i, p1, p2, d);
+        constraintDistance[i] = d;
+        constraintLocation[i].particle1 = p1;
+        constraintLocation[i].particle2 = p2;
         if (system.getParticleMass(p1) != 0 || system.getParticleMass(p2) != 0) {
             atom1.push_back(p1);
             atom2.push_back(p2);
             distance.push_back(d);
+            constraintIndex.push_back(i);
             constraintCount[p1]++;
             constraintCount[p2]++;
         }
+        else
+            constraintLocation[i].algorithm = ConstraintLocation::IGNORED;
     }
 
     // Identify clusters of three atoms that can be treated with SETTLE.  First, for every
@@ -139,10 +167,13 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
 
     int numAtoms = system.getNumParticles();
     vector<map<int, float> > settleConstraints(numAtoms);
+    vector<map<int, int> > settleConstraintIndex(numAtoms);
     for (int i = 0; i < (int)atom1.size(); i++) {
         if (constraintCount[atom1[i]] == 2 && constraintCount[atom2[i]] == 2) {
             settleConstraints[atom1[i]][atom2[i]] = (float) distance[i];
             settleConstraints[atom2[i]][atom1[i]] = (float) distance[i];
+            settleConstraintIndex[atom1[i]][atom2[i]] = constraintIndex[i];
+            settleConstraintIndex[atom2[i]][atom1[i]] = constraintIndex[i];
         }
     }
 
@@ -196,6 +227,19 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
             isShakeAtom[atom1] = true;
             isShakeAtom[atom2] = true;
             isShakeAtom[atom3] = true;
+
+            // Record which constraints make up this cluster, so their distances can be
+            // updated later.
+
+            int c12 = settleConstraintIndex[atom1].find(atom2)->second;
+            int c13 = settleConstraintIndex[atom1].find(atom3)->second;
+            int c23 = settleConstraintIndex[atom2].find(atom3)->second;
+            int cluster = settleClusterConstraints.size();
+            settleClusterConstraints.push_back({c12, c13, c23});
+            for (int c : {c12, c13, c23}) {
+                constraintLocation[c].algorithm = ConstraintLocation::SETTLE;
+                constraintLocation[c].index = cluster;
+            }
         }
         if (atoms.size() > 0) {
             settleAtoms.initialize<mm_int4>(context, atoms.size(), "settleAtoms");
@@ -240,7 +284,7 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
             clusters[centralID] = ShakeCluster(centralID, 1.0/system.getParticleMass(centralID));
         }
         ShakeCluster& cluster = clusters[centralID];
-        cluster.addAtom(peripheralID, distance[i], 1.0/system.getParticleMass(peripheralID));
+        cluster.addAtom(peripheralID, distance[i], 1.0/system.getParticleMass(peripheralID), constraintIndex[i]);
         if (constraintCount[peripheralID] != 1 || invalidForShake[atom1[i]] || invalidForShake[atom2[i]]) {
             cluster.markInvalid(clusters, invalidForShake);
             map<int, ShakeCluster>::iterator otherCluster = clusters.find(peripheralID);
@@ -273,6 +317,15 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
                 continue;
             atoms.push_back(mm_int4(cluster.centralID, cluster.peripheralID[0], (cluster.size > 1 ? cluster.peripheralID[1] : -1), (cluster.size > 2 ? cluster.peripheralID[2] : -1)));
             params.push_back(mm_float4((float) cluster.centralInvMass, (float) (0.5/(cluster.centralInvMass+cluster.peripheralInvMass)), (float) (cluster.distance*cluster.distance), (float) cluster.peripheralInvMass));
+
+            // Record which constraints make up this cluster, so their distances can be
+            // updated later.
+
+            shakeClusterConstraints.push_back(vector<int>(cluster.constraintIdx, cluster.constraintIdx+cluster.size));
+            for (int i = 0; i < cluster.size; i++) {
+                constraintLocation[cluster.constraintIdx[i]].algorithm = ConstraintLocation::SHAKE;
+                constraintLocation[cluster.constraintIdx[i]].index = index;
+            }
             isShakeAtom[cluster.centralID] = true;
             isShakeAtom[cluster.peripheralID[0]] = true;
             if (cluster.size > 1)
@@ -285,6 +338,7 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
         shakeParams.initialize<mm_float4>(context, params.size(), "shakeParams");
         shakeAtoms.upload(atoms);
         shakeParams.upload(params);
+        shakeParamsVec = params;
     }
 
     // Find connected constraints for CCMA.
@@ -398,6 +452,8 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
             atomsVec[i].x = atom1[c];
             atomsVec[i].y = atom2[c];
             distanceVec[i].w = distance[c];
+            constraintLocation[constraintIndex[c]].algorithm = ConstraintLocation::CCMA;
+            constraintLocation[constraintIndex[c]].index = i;
             reducedMassVec[i] = (0.5/(1.0/system.getParticleMass(atom1[c])+1.0/system.getParticleMass(atom2[c])));
             for (unsigned int j = 0; j < matrix[index].size(); j++) {
                 constraintMatrixColumnVec[i+j*numCCMA] = matrix[index][j].first;
@@ -793,6 +849,105 @@ IntegrationUtilities::IntegrationUtilities(ComputeContext& context, const System
 
     kineticEnergyKernel->addArg(context.getVelm());
     kineticEnergyKernel->addArg(kineticEnergy);
+}
+
+bool IntegrationUtilities::updateConstraints(const System& system) {
+    if (system.getNumConstraints() != (int) constraintDistance.size())
+        return false;
+
+    // Find the constraints whose distances have changed.
+
+    vector<double> newDistance(system.getNumConstraints());
+    vector<int> changed;
+    for (int i = 0; i < system.getNumConstraints(); i++) {
+        int p1, p2;
+        system.getConstraintParameters(i, p1, p2, newDistance[i]);
+        if (p1 != constraintLocation[i].particle1 || p2 != constraintLocation[i].particle2)
+            return false;
+        if (newDistance[i] != constraintDistance[i])
+            changed.push_back(i);
+    }
+    if (changed.size() == 0)
+        return true;
+
+    // Work out which clusters they belong to.  A constraint between two massless particles
+    // is ignored by all three algorithms, so there is nothing to update for it.  Anything
+    // that was not recorded at all is unexpected, so rebuild rather than risk missing it.
+
+    set<int> settleClusters, shakeClusters;
+    vector<int> ccmaConstraints;
+    for (int c : changed) {
+        const ConstraintLocation& location = constraintLocation[c];
+        if (location.algorithm == ConstraintLocation::SETTLE)
+            settleClusters.insert(location.index);
+        else if (location.algorithm == ConstraintLocation::SHAKE)
+            shakeClusters.insert(location.index);
+        else if (location.algorithm == ConstraintLocation::CCMA)
+            ccmaConstraints.push_back(c);
+        else if (location.algorithm == ConstraintLocation::NONE)
+            return false;
+    }
+
+    // A SHAKE cluster stores a single distance shared by all its peripheral atoms, so it
+    // is only valid while they remain equal.
+
+    for (int cluster : shakeClusters) {
+        const vector<int>& constraints = shakeClusterConstraints[cluster];
+        double d = newDistance[constraints[0]];
+        for (int c : constraints)
+            if (fabs(newDistance[c]-d)/d > 1e-8)
+                return false;
+    }
+
+    // SETTLE requires two of a cluster's three distances to be equal, and which pair they
+    // are determines which atom is treated as the central one.  If that changes, the
+    // arrangement of the cluster changes and this cannot be applied as a parameter update.
+
+    for (int cluster : settleClusters) {
+        const vector<int>& constraints = settleClusterConstraints[cluster];
+        int oldCentral = findSettleCentralAtom(constraintDistance[constraints[0]], constraintDistance[constraints[1]], constraintDistance[constraints[2]]);
+        int newCentral = findSettleCentralAtom(newDistance[constraints[0]], newDistance[constraints[1]], newDistance[constraints[2]]);
+        if (newCentral != oldCentral || newCentral == -1)
+            return false;
+    }
+
+    // The division between algorithms is unchanged, so the new distances can be applied.
+
+    for (int cluster : settleClusters) {
+        const vector<int>& constraints = settleClusterConstraints[cluster];
+        float d12 = (float) newDistance[constraints[0]];
+        float d13 = (float) newDistance[constraints[1]];
+        float d23 = (float) newDistance[constraints[2]];
+        mm_float2 params;
+        switch (findSettleCentralAtom(newDistance[constraints[0]], newDistance[constraints[1]], newDistance[constraints[2]])) {
+            case 0: params = mm_float2(d12, d23); break;
+            case 1: params = mm_float2(d12, d13); break;
+            default: params = mm_float2(d13, d12); break;
+        }
+        settleParams.uploadSubArray(&params, cluster, 1);
+    }
+    for (int cluster : shakeClusters) {
+        // Only the squared distance depends on the constraint length, so change that one
+        // component of the parameters recorded when the clusters were built.
+
+        double d = newDistance[shakeClusterConstraints[cluster][0]];
+        shakeParamsVec[cluster].z = (float) (d*d);
+        shakeParams.uploadSubArray(&shakeParamsVec[cluster], cluster, 1);
+    }
+    bool useDouble = context.getUseDoublePrecision() || context.getUseMixedPrecision();
+    for (int c : ccmaConstraints) {
+        int slot = constraintLocation[c].index;
+        if (useDouble) {
+            mm_double4 value(0.0, 0.0, 0.0, newDistance[c]);
+            ccmaDistance.uploadSubArray(&value, slot, 1);
+        }
+        else {
+            mm_float4 value(0.0f, 0.0f, 0.0f, (float) newDistance[c]);
+            ccmaDistance.uploadSubArray(&value, slot, 1);
+        }
+    }
+    constraintDistance = newDistance;
+    return true;
 }
 
 void IntegrationUtilities::setNextStepSize(double size) {

@@ -235,6 +235,11 @@ void Context::applyConstraints(double tol) {
     impl->applyConstraints(tol);
 }
 
+void Context::updateConstraintsInContext() {
+    if (!impl->updateConstraintsInContext())
+        reinitialize(true);
+}
+
 void Context::applyVelocityConstraints(double tol) {
     impl->applyVelocityConstraints(tol);
 }

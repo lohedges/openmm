@@ -184,6 +184,17 @@ public:
      */
     void applyConstraints(double tol);
     /**
+     * Copy the constraint distances from the System into this Context.  Only the distances may
+     * have changed.  The particles involved in each constraint must be the same as when the
+     * Context was created.
+     *
+     * @return true if the distances were updated, or false if they cannot be applied without
+     *         rebuilding how the constraints are enforced, in which case the caller must
+     *         reinitialize the Context.  This cannot be done here, since reinitializing
+     *         destroys this object.
+     */
+    bool updateConstraintsInContext();
+    /**
      * Update the velocities of particles so the net velocity of each constrained distance is zero.
      *
      * @param tol    the velocity tolerance within which constraints must be satisfied.
@@ -317,7 +328,7 @@ private:
     bool hasInitializedForces, hasSetPositions, integratorIsDeleted, hasMinimizeKernel;
     int lastForceGroups;
     Platform* platform;
-    Kernel initializeForcesKernel, updateStateDataKernel, applyConstraintsKernel, virtualSitesKernel, minimizeKernel;
+    Kernel initializeForcesKernel, updateStateDataKernel, applyConstraintsKernel, updateConstraintsKernel, virtualSitesKernel, minimizeKernel;
     void* platformData;
 };
 
