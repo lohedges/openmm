@@ -340,6 +340,15 @@ void ReferenceApplyConstraintsKernel::applyToVelocities(ContextImpl& context, do
     extractConstraints(context).applyToVelocities(positions, velocities, inverseMasses, tol);
 }
 
+void ReferenceUpdateConstraintsKernel::initialize(const System& system) {
+}
+
+bool ReferenceUpdateConstraintsKernel::updateConstraints(ContextImpl& context, const System& system) {
+    // The constraint algorithms are cheap to rebuild on this platform, so there is nothing
+    // to gain from updating them in place.  Report that the Context must be reinitialized.
+    return false;
+}
+
 void ReferenceVirtualSitesKernel::initialize(const System& system) {
 }
 

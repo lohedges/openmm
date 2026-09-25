@@ -83,6 +83,8 @@ KernelImpl* HipKernelFactory::createKernelImpl(std::string name, const Platform&
         return new CommonUpdateStateDataKernel(name, platform, cu);
     if (name == ApplyConstraintsKernel::Name())
         return new CommonApplyConstraintsKernel(name, platform, cu);
+    if (name == UpdateConstraintsKernel::Name())
+        return new CommonUpdateConstraintsKernel(name, platform, cu);
     if (name == VirtualSitesKernel::Name())
         return new CommonVirtualSitesKernel(name, platform, cu);
     if (name == MinimizeKernel::Name())

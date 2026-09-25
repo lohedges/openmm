@@ -112,6 +112,7 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     kernelNames.push_back(CalcForcesAndEnergyKernel::Name());
     kernelNames.push_back(UpdateStateDataKernel::Name());
     kernelNames.push_back(ApplyConstraintsKernel::Name());
+    kernelNames.push_back(UpdateConstraintsKernel::Name());
     kernelNames.push_back(VirtualSitesKernel::Name());
     kernelNames.push_back(MinimizeKernel::Name());
     for (int i = 0; i < system.getNumForces(); ++i) {
@@ -172,6 +173,8 @@ void ContextImpl::initialize() {
     updateStateDataKernel.getAs<UpdateStateDataKernel>().initialize(system);
     applyConstraintsKernel = platform->createKernel(ApplyConstraintsKernel::Name(), *this);
     applyConstraintsKernel.getAs<ApplyConstraintsKernel>().initialize(system);
+    updateConstraintsKernel = platform->createKernel(UpdateConstraintsKernel::Name(), *this);
+    updateConstraintsKernel.getAs<UpdateConstraintsKernel>().initialize(system);
     virtualSitesKernel = platform->createKernel(VirtualSitesKernel::Name(), *this);
     virtualSitesKernel.getAs<VirtualSitesKernel>().initialize(system);
     Vec3 periodicBoxVectors[3];
@@ -287,6 +290,10 @@ void ContextImpl::applyConstraints(double tol) {
     if (!hasSetPositions)
         throw OpenMMException("Particle positions have not been set");
     applyConstraintsKernel.getAs<ApplyConstraintsKernel>().apply(*this, tol);
+}
+
+bool ContextImpl::updateConstraintsInContext() {
+    return updateConstraintsKernel.getAs<UpdateConstraintsKernel>().updateConstraints(*this, system);
 }
 
 void ContextImpl::applyVelocityConstraints(double tol) {

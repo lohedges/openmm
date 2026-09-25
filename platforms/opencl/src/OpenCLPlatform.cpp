@@ -63,6 +63,7 @@ OpenCLPlatform::OpenCLPlatform() {
     registerKernelFactory(CalcForcesAndEnergyKernel::Name(), factory);
     registerKernelFactory(UpdateStateDataKernel::Name(), factory);
     registerKernelFactory(ApplyConstraintsKernel::Name(), factory);
+    registerKernelFactory(UpdateConstraintsKernel::Name(), factory);
     registerKernelFactory(VirtualSitesKernel::Name(), factory);
     registerKernelFactory(MinimizeKernel::Name(), factory);
     registerKernelFactory(CalcHarmonicBondForceKernel::Name(), factory);

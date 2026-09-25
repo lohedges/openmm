@@ -278,6 +278,38 @@ public:
 };
 
 /**
+ * This kernel copies changed constraint distances from the System into a Context.
+ */
+class UpdateConstraintsKernel : public KernelImpl {
+public:
+    static std::string Name() {
+        return "UpdateConstraints";
+    }
+    UpdateConstraintsKernel(std::string name, const Platform& platform) : KernelImpl(name, platform) {
+    }
+    /**
+     * Initialize the kernel.
+     *
+     * @param system     the System this kernel will be applied to
+     */
+    virtual void initialize(const System& system) = 0;
+    /**
+     * Copy the constraint distances from the System into the Context.  Only the distances
+     * may have changed.  The particles involved in each constraint must be the same as when
+     * the Context was created.
+     *
+     * Some changes cannot be applied this way, because they alter how the constraints are
+     * divided between the algorithms used to enforce them.  In that case this returns false
+     * and the caller must reinitialize the Context instead.
+     *
+     * @param context    the context in which to execute this kernel
+     * @param system     the System whose constraint parameters should be copied
+     * @return true if the distances were updated, false if the Context must be reinitialized
+     */
+    virtual bool updateConstraints(ContextImpl& context, const System& system) = 0;
+};
+
+/**
  * This kernel recomputes the positions of virtual sites.
  */
 class VirtualSitesKernel : public KernelImpl {

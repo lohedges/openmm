@@ -214,6 +214,18 @@ public:
      */
     void applyConstraints(double tol);
     /**
+     * Copy the constraint distances from the System into this Context.  Call this after using
+     * System::setConstraintParameters() to change the distance of one or more constraints, in
+     * the same way that Force::updateParametersInContext() is used for force field parameters.
+     *
+     * This is intended for changing the distances of existing constraints, which is usually
+     * fast.  Some changes cannot be applied that way, for example if the distances within a
+     * group of constraints that were previously equal become different, or if the particles
+     * involved in a constraint change.  In that case this falls back to reinitializing the
+     * Context, preserving its state, which is correct but much slower.
+     */
+    void updateConstraintsInContext();
+    /**
      * Update the velocities of particles so the net velocity of each constrained distance is zero.
      *
      * @param tol    the velocity tolerance within which constraints must be satisfied.

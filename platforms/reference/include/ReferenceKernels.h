@@ -269,6 +269,32 @@ private:
 };
 
 /**
+ * This kernel copies changed constraint distances from the System into a Context.
+ */
+class ReferenceUpdateConstraintsKernel : public UpdateConstraintsKernel {
+public:
+    ReferenceUpdateConstraintsKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) :
+            UpdateConstraintsKernel(name, platform), data(data) {
+    }
+    /**
+     * Initialize the kernel.
+     *
+     * @param system     the System this kernel will be applied to
+     */
+    void initialize(const System& system);
+    /**
+     * Copy the constraint distances from the System into the Context.
+     *
+     * @param context    the context in which to execute this kernel
+     * @param system     the System whose constraint parameters should be copied
+     * @return true if the distances were updated, false if the Context must be reinitialized
+     */
+    bool updateConstraints(ContextImpl& context, const System& system);
+private:
+    ReferencePlatform::PlatformData& data;
+};
+
+/**
  * This kernel recomputes the positions of virtual sites.
  */
 class ReferenceVirtualSitesKernel : public VirtualSitesKernel {
