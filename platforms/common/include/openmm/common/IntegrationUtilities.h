@@ -135,8 +135,38 @@ public:
      * @param velocities  the shifted velocities are returned in this
      */
     void computeShiftedVelocities(double timeShift, std::vector<Vec3>& velocities);
+    /**
+     * Update the constraint parameters to match the ones currently stored in the System.
+     * Only the distances may have changed.  The particles involved in each constraint must
+     * be the same as when the Context was created.
+     *
+     * This does not rebuild the division of constraints between the SETTLE, SHAKE and CCMA
+     * algorithms.  If the new distances would change that division, it cannot be applied
+     * this way and the caller must reinitialize the Context instead.
+     *
+     * @param system   the System whose constraint parameters should be copied
+     * @return true if the parameters were updated, false if the Context must be reinitialized
+     */
+    bool updateConstraints(const System& system);
 protected:
     virtual void applyConstraintsImpl(bool constrainVelocities, double tol) = 0;
+    /**
+     * Records where a constraint ended up when the constraints were divided between the
+     * SETTLE, SHAKE and CCMA algorithms, and which particles it connects, so that its
+     * distance can be updated later.
+     *
+     * IGNORED marks a constraint between two massless particles, which is left out of all
+     * three algorithms.  NONE means no algorithm was recorded for it, which should not
+     * happen and is treated as a reason to rebuild rather than update in place.
+     */
+    struct ConstraintLocation {
+        enum Algorithm {NONE, IGNORED, SETTLE, SHAKE, CCMA};
+        Algorithm algorithm;
+        int index;
+        int particle1, particle2;
+        ConstraintLocation() : algorithm(NONE), index(-1), particle1(-1), particle2(-1) {
+        }
+    };
     ComputeContext& context;
     ComputeKernel settlePosKernel, settleVelKernel;
     ComputeKernel shakePosKernel, shakeVelKernel;
@@ -172,6 +202,15 @@ protected:
     ComputeArray vsiteStage;
     ComputeArray kineticEnergy;
     int randomPos, lastSeed, numVsites, numVsiteStages, keWorkGroupSize;
+    // State recorded when the constraints were set up, so that their distances can be
+    // updated later without rebuilding everything.  All of these are indexed by the
+    // constraint's index in the System, except settleClusterConstraints and
+    // shakeClusterConstraints which are indexed by cluster.
+    std::vector<double> constraintDistance;
+    std::vector<ConstraintLocation> constraintLocation;
+    std::vector<std::vector<int> > settleClusterConstraints;
+    std::vector<std::vector<int> > shakeClusterConstraints;
+    std::vector<mm_float4> shakeParamsVec;
     bool hasOverlappingVsites;
     mm_double2 lastStepSize;
     struct ShakeCluster;
