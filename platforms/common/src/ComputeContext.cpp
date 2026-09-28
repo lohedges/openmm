@@ -462,13 +462,14 @@ void ComputeContext::findMoleculeGroups() {
                         identical = false;
             }
 
-            // See if the constraints are identical.
+            // See if the constraints are identical.  Use the ones the Context is applying, which
+            // may differ from the System if it has been modified since.
 
             for (int i = 0; i < (int) mol.constraints.size() && identical; i++) {
                 int c1particle1, c1particle2, c2particle1, c2particle2;
                 double distance1, distance2;
-                system.getConstraintParameters(mol.constraints[i], c1particle1, c1particle2, distance1);
-                system.getConstraintParameters(mol2.constraints[i], c2particle1, c2particle2, distance2);
+                getIntegrationUtilities().getConstraintParameters(mol.constraints[i], c1particle1, c1particle2, distance1);
+                getIntegrationUtilities().getConstraintParameters(mol2.constraints[i], c2particle1, c2particle2, distance2);
                 if (c1particle1 != c2particle1-atomOffset || c1particle2 != c2particle2-atomOffset || distance1 != distance2)
                     identical = false;
             }
@@ -587,11 +588,12 @@ bool ComputeContext::invalidateMoleculeConstraints(const vector<int>& constraint
     // Molecules are only interchangeable if their constraint distances are identical, so
     // compare each changed constraint with the corresponding one in every other instance.
 
+    IntegrationUtilities& integration = getIntegrationUtilities();
     set<pair<int, int> > checked;
     for (int c : constraints) {
         int particle1, particle2;
         double distance;
-        system.getConstraintParameters(c, particle1, particle2, distance);
+        integration.getConstraintParameters(c, particle1, particle2, distance);
         int mol = atomMolecule[particle1];
         int group = moleculeGroup[mol];
         const vector<int>& instances = moleculeGroups[group].instances;
@@ -603,7 +605,7 @@ bool ComputeContext::invalidateMoleculeConstraints(const vector<int>& constraint
             continue;
         for (int instance : instances) {
             double distance2;
-            system.getConstraintParameters(molecules[instance].constraints[position], particle1, particle2, distance2);
+            integration.getConstraintParameters(molecules[instance].constraints[position], particle1, particle2, distance2);
             if (distance2 != distance) {
                 resetAtomOrder();
                 findMoleculeGroups();
