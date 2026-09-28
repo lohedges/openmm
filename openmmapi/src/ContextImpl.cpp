@@ -52,7 +52,7 @@ const static char CHECKPOINT_MAGIC_BYTES[] = "OpenMM Binary Checkpoint\n";
 
 
 ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integrator, Platform* platform, const map<string, string>& properties, ContextImpl* originalContext) :
-        owner(owner), system(system), integrator(integrator), hasInitializedForces(false), hasSetPositions(false), integratorIsDeleted(false), hasMinimizeKernel(false),
+        owner(owner), system(system), integrator(integrator), hasInitializedForces(false), hasSetPositions(false), integratorIsDeleted(false), hasMinimizeKernel(false), hasUpdateConstraintsKernel(false),
         lastForceGroups(-1), platform(platform), platformData(NULL) {
     int numParticles = system.getNumParticles();
     if (numParticles == 0)
@@ -112,7 +112,6 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     kernelNames.push_back(CalcForcesAndEnergyKernel::Name());
     kernelNames.push_back(UpdateStateDataKernel::Name());
     kernelNames.push_back(ApplyConstraintsKernel::Name());
-    kernelNames.push_back(UpdateConstraintsKernel::Name());
     kernelNames.push_back(VirtualSitesKernel::Name());
     kernelNames.push_back(MinimizeKernel::Name());
     for (int i = 0; i < system.getNumForces(); ++i) {
@@ -173,8 +172,11 @@ void ContextImpl::initialize() {
     updateStateDataKernel.getAs<UpdateStateDataKernel>().initialize(system);
     applyConstraintsKernel = platform->createKernel(ApplyConstraintsKernel::Name(), *this);
     applyConstraintsKernel.getAs<ApplyConstraintsKernel>().initialize(system);
-    updateConstraintsKernel = platform->createKernel(UpdateConstraintsKernel::Name(), *this);
-    updateConstraintsKernel.getAs<UpdateConstraintsKernel>().initialize(system);
+    if (platform->supportsKernels({UpdateConstraintsKernel::Name()})) {
+        updateConstraintsKernel = platform->createKernel(UpdateConstraintsKernel::Name(), *this);
+        updateConstraintsKernel.getAs<UpdateConstraintsKernel>().initialize(system);
+        hasUpdateConstraintsKernel = true;
+    }
     virtualSitesKernel = platform->createKernel(VirtualSitesKernel::Name(), *this);
     virtualSitesKernel.getAs<VirtualSitesKernel>().initialize(system);
     Vec3 periodicBoxVectors[3];
@@ -201,6 +203,7 @@ ContextImpl::~ContextImpl() {
     initializeForcesKernel = Kernel();
     updateStateDataKernel = Kernel();
     applyConstraintsKernel = Kernel();
+    updateConstraintsKernel = Kernel();
     virtualSitesKernel = Kernel();
     minimizeKernel = Kernel();
     if (!integratorIsDeleted) {
@@ -293,7 +296,7 @@ void ContextImpl::applyConstraints(double tol) {
 }
 
 bool ContextImpl::updateConstraintsInContext() {
-    if (!integrator.supportsConstraintUpdates())
+    if (!hasUpdateConstraintsKernel || !integrator.supportsConstraintUpdates())
         return false;
     return updateConstraintsKernel.getAs<UpdateConstraintsKernel>().updateConstraints(*this, system);
 }
