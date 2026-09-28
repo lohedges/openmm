@@ -30,6 +30,8 @@
 #include "openmm/internal/AssertionUtilities.h"
 #include "openmm/Context.h"
 #include "openmm/HarmonicBondForce.h"
+#include "openmm/LocalEnergyMinimizer.h"
+#include "openmm/NonbondedForce.h"
 #include "openmm/System.h"
 #include "openmm/VerletIntegrator.h"
 #include "sfmt/SFMT.h"
@@ -108,8 +110,9 @@ void buildConstrainedSystem(System& system, vector<Vec3>& positions, vector<int>
 /**
  * Check that every constraint in the system is satisfied to within a tolerance.
  */
-void verifyConstraints(const System& system, Context& context, double tol) {
-    context.applyConstraints(1e-6);
+void verifyConstraints(const System& system, Context& context, double tol, bool applyFirst=true) {
+    if (applyFirst)
+        context.applyConstraints(1e-6);
     State state = context.getState(State::Positions);
     const vector<Vec3>& pos = state.getPositions();
     for (int i = 0; i < system.getNumConstraints(); i++) {
@@ -374,6 +377,66 @@ void testChangingParticles() {
     verifyConstraints(system, context, 1e-4);
 }
 
+void testIdenticalMoleculesDiverge() {
+    // Atoms are only reordered among molecules that are identical, including their
+    // constraint distances.  Giving each molecule its own distances means none of them
+    // can be swapped any more, even though they were identical when the context was made.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    NonbondedForce* nonbonded = new NonbondedForce();
+    nonbonded->setNonbondedMethod(NonbondedForce::CutoffPeriodic);
+    nonbonded->setCutoffDistance(1.0);
+    for (int i = 0; i < system.getNumParticles(); i++)
+        nonbonded->addParticle(0.0, 0.1, 0.0);
+    system.addForce(nonbonded);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    integrator.step(1);
+
+    auto scale = [&] (const vector<int>& constraints, int perMolecule) {
+        for (int i = 0; i < (int) constraints.size(); i++) {
+            int p1, p2;
+            double distance;
+            system.getConstraintParameters(constraints[i], p1, p2, distance);
+            system.setConstraintParameters(constraints[i], p1, p2, (1.0+0.01*(i/perMolecule))*distance);
+        }
+    };
+    scale(settle, 3);
+    scale(shake, 3);
+    scale(ccma, 3);
+    context.updateConstraintsInContext();
+    verifyConstraints(system, context, 1e-4);
+
+    integrator.step(300);
+    verifyConstraints(system, context, 1e-4);
+}
+
+void testMinimizerUsesUpdatedConstraints() {
+    System system;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    VerletIntegrator integrator(0.001);
+    integrator.setConstraintTolerance(1e-4);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    LocalEnergyMinimizer::minimize(context);
+
+    for (int i = 0; i < (int) ccma.size(); i++) {
+        int p1, p2;
+        double distance;
+        system.getConstraintParameters(ccma[i], p1, p2, distance);
+        system.setConstraintParameters(ccma[i], p1, p2, 1.05*distance);
+    }
+    context.updateConstraintsInContext();
+    LocalEnergyMinimizer::minimize(context);
+    verifyConstraints(system, context, 1e-3, false);
+}
+
 void runPlatformTests();
 
 int main(int argc, char* argv[]) {
@@ -386,6 +449,8 @@ int main(int argc, char* argv[]) {
         testSettleCentralAtomChanges();
         testSettleClusterBecomesUnhandleable();
         testChangingParticles();
+        testIdenticalMoleculesDiverge();
+        testMinimizerUsesUpdatedConstraints();
         runPlatformTests();
     }
     catch(const exception& e) {
