@@ -448,6 +448,54 @@ void testMinimizerIgnoresUnappliedChanges() {
     verifyConstraints(original, context, 1e-3, false);
 }
 
+void testRegroupingIgnoresUnappliedChanges() {
+    // Until the Context is updated, deciding which molecules are identical for reordering
+    // should use the constraints the Context was created with.  Otherwise, making two
+    // molecules identical in the System lets them be swapped while the Context still
+    // constrains them differently.
+
+    System system, original;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    vector<Vec3> positions2;
+    vector<int> settle2, shake2, ccma2;
+    buildConstrainedSystem(original, positions2, settle2, shake2, ccma2);
+    for (System* s : {&system, &original}) {
+        for (int i = ccma.size()/2; i < (int) ccma.size(); i++) {
+            int p1, p2;
+            double distance;
+            s->getConstraintParameters(ccma[i], p1, p2, distance);
+            s->setConstraintParameters(ccma[i], p1, p2, 1.07*distance);
+        }
+    }
+    NonbondedForce* nonbonded = new NonbondedForce();
+    nonbonded->setNonbondedMethod(NonbondedForce::CutoffPeriodic);
+    nonbonded->setCutoffDistance(1.0);
+    for (int i = 0; i < system.getNumParticles(); i++)
+        nonbonded->addParticle(0.0, 0.1, 0.0);
+    system.addForce(nonbonded);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    integrator.step(1);
+
+    // Make every chain identical in the System without updating the Context, then change
+    // a force so the molecules get regrouped.
+
+    for (int i = ccma.size()/2; i < (int) ccma.size(); i++) {
+        int p1, p2, q1, q2;
+        double distance, unscaled;
+        system.getConstraintParameters(ccma[i-ccma.size()/2], q1, q2, unscaled);
+        system.getConstraintParameters(ccma[i], p1, p2, distance);
+        system.setConstraintParameters(ccma[i], p1, p2, unscaled);
+    }
+    nonbonded->setParticleParameters(0, 0.0, 0.2, 0.0);
+    nonbonded->updateParametersInContext(context);
+    integrator.step(1);
+    verifyConstraints(original, context, 1e-4);
+}
+
 void testIdenticalMoleculesDiverge() {
     // Atoms are only reordered among molecules that are identical, including their
     // constraint distances.  Giving each molecule its own distances means none of them
@@ -580,6 +628,7 @@ int main(int argc, char* argv[]) {
         testAddingConstraint();
         testRemovingConstraint();
         testIdenticalMoleculesDiverge();
+        testRegroupingIgnoresUnappliedChanges();
         testMinimizerUsesUpdatedConstraints();
         testMinimizerIgnoresUnappliedChanges();
         testIntegratorOptIn();
