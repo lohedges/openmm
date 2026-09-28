@@ -379,6 +379,75 @@ void testChangingParticles() {
     verifyConstraints(system, context, 1e-4);
 }
 
+void testAddingConstraint() {
+    // Adding a constraint changes how they are divided between the algorithms, so the
+    // update has to fall back to rebuilding.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+
+    // Constrain two peripheral atoms of a SHAKE cluster to each other.
+
+    int center, p1, p2;
+    double distance;
+    system.getConstraintParameters(shake[0], center, p1, distance);
+    system.getConstraintParameters(shake[1], center, p2, distance);
+    system.addConstraint(p1, p2, distance*sqrt(2.0));
+    context.updateConstraintsInContext();
+    verifyConstraints(system, context, 1e-4);
+
+    integrator.step(20);
+    verifyConstraints(system, context, 1e-4);
+}
+
+void testRemovingConstraint() {
+    // Removing a constraint shifts the indices of the ones after it, so the update has
+    // to fall back to rebuilding.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    VerletIntegrator integrator(0.001);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+
+    system.removeConstraint(ccma[2]);
+    context.updateConstraintsInContext();
+    verifyConstraints(system, context, 1e-4);
+
+    integrator.step(20);
+    verifyConstraints(system, context, 1e-4);
+}
+
+void testMinimizerIgnoresUnappliedChanges() {
+    // Until the Context is updated, the minimizer should keep using the constraints the
+    // Context was created with, the same as the rest of the Context does.
+
+    System system;
+    vector<Vec3> positions;
+    vector<int> settle, shake, ccma;
+    buildConstrainedSystem(system, positions, settle, shake, ccma);
+    System original;
+    vector<Vec3> positions2;
+    vector<int> settle2, shake2, ccma2;
+    buildConstrainedSystem(original, positions2, settle2, shake2, ccma2);
+    VerletIntegrator integrator(0.001);
+    integrator.setConstraintTolerance(1e-4);
+    Context context(system, integrator, platform);
+    context.setPositions(positions);
+    LocalEnergyMinimizer::minimize(context);
+
+    system.removeConstraint(system.getNumConstraints()-1);
+    LocalEnergyMinimizer::minimize(context);
+    verifyConstraints(original, context, 1e-3, false);
+}
+
 void testIdenticalMoleculesDiverge() {
     // Atoms are only reordered among molecules that are identical, including their
     // constraint distances.  Giving each molecule its own distances means none of them
@@ -508,8 +577,11 @@ int main(int argc, char* argv[]) {
         testSettleCentralAtomChanges();
         testSettleClusterBecomesUnhandleable();
         testChangingParticles();
+        testAddingConstraint();
+        testRemovingConstraint();
         testIdenticalMoleculesDiverge();
         testMinimizerUsesUpdatedConstraints();
+        testMinimizerIgnoresUnappliedChanges();
         testIntegratorOptIn();
         runPlatformTests();
     }
