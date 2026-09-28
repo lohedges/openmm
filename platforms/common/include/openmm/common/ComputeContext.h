@@ -610,6 +610,13 @@ public:
      */
     bool invalidateMolecules(ComputeForceInfo* force, bool checkAtoms=true, bool checkGroups=true);
     /**
+     * Mark that the distances of some constraints have changed, so the current molecule definitions
+     * (and hence the atom order) may be invalid.  Returns true if the molecules had to be regrouped.
+     *
+     * @param constraints    the indices of the constraints whose distances have changed
+     */
+    bool invalidateMoleculeConstraints(const std::vector<int>& constraints);
+    /**
      * Make sure the current atom order is valid, based on the forces.  If not, perform reordering
      * to generate a new valid order.  This method is only needed in very unusual situations.
      */
@@ -675,6 +682,7 @@ protected:
     std::vector<ComputeForceInfo*> forces;
     std::vector<Molecule> molecules;
     std::vector<MoleculeGroup> moleculeGroups;
+    std::vector<int> atomMolecule, moleculeGroup;
     std::vector<int> atomIndex;
     std::vector<mm_int4> posCellOffsets;
     std::vector<ReorderListener*> reorderListeners;
