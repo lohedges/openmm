@@ -325,7 +325,7 @@ private:
     std::vector<ForceImpl*> forceImpls;
     std::map<std::string, double> parameters;
     mutable std::vector<std::vector<int> > molecules;
-    bool hasInitializedForces, hasSetPositions, integratorIsDeleted, hasMinimizeKernel;
+    bool hasInitializedForces, hasSetPositions, integratorIsDeleted, hasMinimizeKernel, hasUpdateConstraintsKernel;
     int lastForceGroups;
     Platform* platform;
     Kernel initializeForcesKernel, updateStateDataKernel, applyConstraintsKernel, updateConstraintsKernel, virtualSitesKernel, minimizeKernel;
