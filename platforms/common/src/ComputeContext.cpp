@@ -408,7 +408,7 @@ void ComputeContext::findMoleculeGroups() {
 
         vector<vector<int> > atomIndices = ContextImpl::findMolecules(numAtoms, atomBonds);
         int numMolecules = atomIndices.size();
-        vector<int> atomMolecule(numAtoms);
+        atomMolecule.resize(numAtoms);
         for (int i = 0; i < (int) atomIndices.size(); i++)
             for (int j = 0; j < (int) atomIndices[i].size(); j++)
                 atomMolecule[atomIndices[i][j]] = i;
@@ -504,8 +504,11 @@ void ComputeContext::findMoleculeGroups() {
         }
     }
     moleculeGroups.resize(moleculeInstances.size());
+    moleculeGroup.resize(molecules.size());
     for (int i = 0; i < (int) moleculeInstances.size(); i++)
     {
+        for (int instance : moleculeInstances[i])
+            moleculeGroup[instance] = i;
         moleculeGroups[i].instances = moleculeInstances[i];
         moleculeGroups[i].offsets = moleculeOffsets[i];
         vector<int>& atoms = uniqueMolecules[i].atoms;
@@ -575,6 +578,41 @@ bool ComputeContext::invalidateMolecules(ComputeForceInfo* force, bool checkAtom
     findMoleculeGroups();
     reorderAtoms();
     return true;
+}
+
+bool ComputeContext::invalidateMoleculeConstraints(const vector<int>& constraints) {
+    if (numAtoms == 0 || !getNonbondedUtilities().getUseCutoff())
+        return false;
+
+    // Molecules are only interchangeable if their constraint distances are identical, so
+    // compare each changed constraint with the corresponding one in every other instance.
+
+    set<pair<int, int> > checked;
+    for (int c : constraints) {
+        int particle1, particle2;
+        double distance;
+        system.getConstraintParameters(c, particle1, particle2, distance);
+        int mol = atomMolecule[particle1];
+        int group = moleculeGroup[mol];
+        const vector<int>& instances = moleculeGroups[group].instances;
+        if (instances.size() < 2)
+            continue;
+        const vector<int>& molConstraints = molecules[mol].constraints;
+        int position = find(molConstraints.begin(), molConstraints.end(), c)-molConstraints.begin();
+        if (!checked.insert(make_pair(group, position)).second)
+            continue;
+        for (int instance : instances) {
+            double distance2;
+            system.getConstraintParameters(molecules[instance].constraints[position], particle1, particle2, distance2);
+            if (distance2 != distance) {
+                resetAtomOrder();
+                findMoleculeGroups();
+                reorderAtoms();
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void ComputeContext::resetAtomOrder() {

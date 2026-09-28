@@ -96,6 +96,21 @@ void CommonMinimizeKernel::execute(ContextImpl& context, double tolerance, int m
         isSetup = true;
     }
 
+    // Constraint distances can change without the kernel being reinitialized.
+
+    bool distancesChanged = false;
+    for (int i = 0; i < numConstraints; i++) {
+        int particle1, particle2;
+        double distance;
+        context.getSystem().getConstraintParameters(i, particle1, particle2, distance);
+        if (distance != hostConstraintDistances[i]) {
+            hostConstraintDistances[i] = distance;
+            distancesChanged = true;
+        }
+    }
+    if (distancesChanged)
+        constraintDistances.upload(hostConstraintDistances, true);
+
     const Integrator& integrator = context.getIntegrator();
     forceGroups = integrator.getIntegrationForceGroups();
     constraintTol = integrator.getConstraintTolerance();
