@@ -29,6 +29,7 @@
 
 #include "openmm/common/CommonMinimizeKernel.h"
 #include "openmm/common/ContextSelector.h"
+#include "openmm/common/IntegrationUtilities.h"
 #include "CommonKernelSources.h"
 #include <map>
 
@@ -63,7 +64,8 @@ CommonMinimizeKernel::~CommonMinimizeKernel() {
 void CommonMinimizeKernel::initialize(const System& system) {
     numParticles = system.getNumParticles();
     numVariables = numParticles * 3;
-    numConstraints = system.getNumConstraints();
+    IntegrationUtilities& integration = cc.getIntegrationUtilities();
+    numConstraints = integration.getNumConstraints();
 
     hostPositions.resize(numParticles);
     hostX.resize(numVariables);
@@ -72,7 +74,7 @@ void CommonMinimizeKernel::initialize(const System& system) {
     hostConstraintDistances.resize(numConstraints);
 
     for (int i = 0; i < numConstraints; i++) {
-        system.getConstraintParameters(i, hostConstraintIndices[i].x, hostConstraintIndices[i].y, hostConstraintDistances[i]);
+        integration.getConstraintParameters(i, hostConstraintIndices[i].x, hostConstraintIndices[i].y, hostConstraintDistances[i]);
     }
 }
 
@@ -96,13 +98,14 @@ void CommonMinimizeKernel::execute(ContextImpl& context, double tolerance, int m
         isSetup = true;
     }
 
-    // Constraint distances can change without the kernel being reinitialized.
+    // Constraint distances can be updated without the kernel being reinitialized.
 
+    IntegrationUtilities& integration = cc.getIntegrationUtilities();
     bool distancesChanged = false;
     for (int i = 0; i < numConstraints; i++) {
         int particle1, particle2;
         double distance;
-        context.getSystem().getConstraintParameters(i, particle1, particle2, distance);
+        integration.getConstraintParameters(i, particle1, particle2, distance);
         if (distance != hostConstraintDistances[i]) {
             hostConstraintDistances[i] = distance;
             distancesChanged = true;
