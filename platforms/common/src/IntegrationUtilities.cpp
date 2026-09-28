@@ -955,6 +955,7 @@ bool IntegrationUtilities::updateConstraints(const System& system) {
         }
     }
     constraintDistance = newDistance;
+    context.invalidateMoleculeConstraints(changed);
     return true;
 }
 
