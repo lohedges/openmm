@@ -259,6 +259,12 @@ protected:
      */
     bool kineticEnergyRequiresForce() const;
     /**
+     * This integrator uses the standard constraint algorithms, so their distances can be updated in place.
+     */
+    bool supportsConstraintUpdates() const {
+        return true;
+    }
+    /**
      * This is called while writing checkpoints.  It gives the integrator a chance to write
      * its own data.
      */

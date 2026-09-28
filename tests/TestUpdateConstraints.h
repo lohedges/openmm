@@ -28,6 +28,7 @@
  * -------------------------------------------------------------------------- */
 
 #include "openmm/internal/AssertionUtilities.h"
+#include "openmm/CompoundIntegrator.h"
 #include "openmm/Context.h"
 #include "openmm/HarmonicBondForce.h"
 #include "openmm/LocalEnergyMinimizer.h"
@@ -36,6 +37,7 @@
 #include "openmm/VerletIntegrator.h"
 #include "sfmt/SFMT.h"
 #include <iostream>
+#include <memory>
 #include <vector>
 
 using namespace OpenMM;
@@ -437,6 +439,63 @@ void testMinimizerUsesUpdatedConstraints() {
     verifyConstraints(system, context, 1e-3, false);
 }
 
+/**
+ * A VerletIntegrator that counts how many times it has been initialized, and can decline
+ * to support constraint updates.
+ */
+class CountingIntegrator : public VerletIntegrator {
+public:
+    CountingIntegrator(bool supportsUpdates) : VerletIntegrator(0.001), numInitializations(0), supportsUpdates(supportsUpdates) {
+    }
+    int numInitializations;
+protected:
+    void initialize(ContextImpl& context) {
+        numInitializations++;
+        VerletIntegrator::initialize(context);
+    }
+    bool supportsConstraintUpdates() const {
+        return supportsUpdates;
+    }
+private:
+    bool supportsUpdates;
+};
+
+void testIntegratorOptIn() {
+    // An integrator that doesn't declare support for constraint updates must cause the
+    // context to be reinitialized, whether used directly or inside a CompoundIntegrator.
+
+    bool fastPath = (platform.getName() != "Reference");
+    for (bool supportsUpdates : {true, false}) {
+        for (bool compound : {false, true}) {
+            System system;
+            vector<Vec3> positions;
+            vector<int> settle, shake, ccma;
+            buildConstrainedSystem(system, positions, settle, shake, ccma);
+            CountingIntegrator* counting = new CountingIntegrator(supportsUpdates);
+            CompoundIntegrator compoundIntegrator;
+            unique_ptr<CountingIntegrator> owned;
+            Integrator* integrator = counting;
+            if (compound) {
+                compoundIntegrator.addIntegrator(new VerletIntegrator(0.001));
+                compoundIntegrator.addIntegrator(counting);
+                integrator = &compoundIntegrator;
+            }
+            else
+                owned.reset(counting);
+            Context context(system, *integrator, platform);
+            context.setPositions(positions);
+
+            int p1, p2;
+            double distance;
+            system.getConstraintParameters(ccma[0], p1, p2, distance);
+            system.setConstraintParameters(ccma[0], p1, p2, distance+0.002);
+            context.updateConstraintsInContext();
+            ASSERT_EQUAL(supportsUpdates && fastPath ? 1 : 2, counting->numInitializations);
+            verifyConstraints(system, context, 1e-4);
+        }
+    }
+}
+
 void runPlatformTests();
 
 int main(int argc, char* argv[]) {
@@ -451,6 +510,7 @@ int main(int argc, char* argv[]) {
         testChangingParticles();
         testIdenticalMoleculesDiverge();
         testMinimizerUsesUpdatedConstraints();
+        testIntegratorOptIn();
         runPlatformTests();
     }
     catch(const exception& e) {

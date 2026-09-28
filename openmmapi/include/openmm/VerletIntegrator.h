@@ -75,6 +75,12 @@ protected:
      */
     double computeKineticEnergy();
     /**
+     * This integrator uses the standard constraint algorithms, so their distances can be updated in place.
+     */
+    bool supportsConstraintUpdates() const {
+        return true;
+    }
+    /**
      * Get the time interval by which velocities are offset from positions.  This is used to
      * adjust velocities when setVelocitiesToTemperature() is called on a Context.
      */
