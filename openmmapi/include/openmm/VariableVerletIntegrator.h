@@ -125,6 +125,12 @@ protected:
      * Compute the kinetic energy of the system at the current time.
      */
     double computeKineticEnergy();
+    /**
+     * This integrator uses the standard constraint algorithms, so their distances can be updated in place.
+     */
+    bool supportsConstraintUpdates() const {
+        return true;
+    }
 private:
     double errorTol, maxStepSize;
     Kernel kernel;

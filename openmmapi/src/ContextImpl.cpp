@@ -293,6 +293,8 @@ void ContextImpl::applyConstraints(double tol) {
 }
 
 bool ContextImpl::updateConstraintsInContext() {
+    if (!integrator.supportsConstraintUpdates())
+        return false;
     return updateConstraintsKernel.getAs<UpdateConstraintsKernel>().updateConstraints(*this, system);
 }
 
