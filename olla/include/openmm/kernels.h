@@ -278,7 +278,8 @@ public:
 };
 
 /**
- * This kernel copies changed constraint distances from the System into a Context.
+ * This kernel copies changed constraint distances from the System into a Context.  Platforms
+ * are not required to implement it.  If they don't, the Context is reinitialized instead.
  */
 class UpdateConstraintsKernel : public KernelImpl {
 public:
