@@ -120,6 +120,10 @@ protected:
      */
     virtual double computeKineticEnergy() override { return 0; }
     /**
+     * Drude integrators use the standard constraint algorithms, so their distances can be updated in place.
+     */
+    virtual bool supportsConstraintUpdates() const override { return true; }
+    /**
      * Return a list of velocities normally distributed around a target temperature, with the Drude
      * temperatures assigned according to the Drude temperature assigned to the integrator.
      *
