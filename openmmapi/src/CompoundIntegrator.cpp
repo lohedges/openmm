@@ -138,6 +138,13 @@ double CompoundIntegrator::computeKineticEnergy() {
     return integrators[currentIntegrator]->computeKineticEnergy();
 }
 
+bool CompoundIntegrator::supportsConstraintUpdates() const {
+    for (Integrator* integrator : integrators)
+        if (!integrator->supportsConstraintUpdates())
+            return false;
+    return true;
+}
+
 void CompoundIntegrator::createCheckpoint(std::ostream& stream) const {
     stream.write((char*) &currentIntegrator, sizeof(int));
     for (int i = 0; i < integrators.size(); i++)

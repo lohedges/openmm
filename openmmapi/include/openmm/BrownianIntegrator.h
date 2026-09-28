@@ -131,6 +131,12 @@ protected:
      * Computing kinetic energy for this integrator does not require forces.
      */
     bool kineticEnergyRequiresForce() const;
+    /**
+     * This integrator uses the standard constraint algorithms, so their distances can be updated in place.
+     */
+    bool supportsConstraintUpdates() const {
+        return true;
+    }
 private:
     double temperature, friction;
     int randomNumberSeed;
