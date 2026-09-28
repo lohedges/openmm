@@ -147,6 +147,15 @@ protected:
         return true;
     }
     /**
+     * Get whether Context::updateConstraintsInContext() can change constraint distances without
+     * reinitializing the Context.  The default implementation returns false to be safe.  Integrators
+     * that only apply constraints through the platform's standard constraint algorithms can override
+     * this to return true.
+     */
+    virtual bool supportsConstraintUpdates() const {
+        return false;
+    }
+    /**
      * Return a list of velocities normally distributed around a target temperature.  This may be
      * overridden by Drude integrators to ensure that Drude pairs have their center of mass velocity
      * assigned as a single entity, rather than treating both particles as being independent.
