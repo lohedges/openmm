@@ -148,6 +148,27 @@ public:
      * @return true if the parameters were updated, false if the Context must be reinitialized
      */
     bool updateConstraints(const System& system);
+    /**
+     * Get the number of constraints being applied.  This may differ from the System if it has been
+     * modified since the Context was created.
+     */
+    int getNumConstraints() const {
+        return constraintDistance.size();
+    }
+    /**
+     * Get the parameters of a constraint as they are currently being applied.  These are the ones
+     * the Context was created with, modified by any later call to updateConstraints().
+     *
+     * @param index      the index of the constraint
+     * @param particle1  the index of the first particle connected by the constraint
+     * @param particle2  the index of the second particle connected by the constraint
+     * @param distance   the distance between the two particles
+     */
+    void getConstraintParameters(int index, int& particle1, int& particle2, double& distance) const {
+        particle1 = constraintLocation[index].particle1;
+        particle2 = constraintLocation[index].particle2;
+        distance = constraintDistance[index];
+    }
 protected:
     virtual void applyConstraintsImpl(bool constrainVelocities, double tol) = 0;
     /**
