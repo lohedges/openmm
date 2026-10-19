@@ -179,10 +179,63 @@ void CommonUpdateStateDataKernel::getPositions(ContextImpl& context, vector<Vec3
     cc.getThreadPool().waitForThreads();
 }
 
+/**
+ * Estimate the fraction of atoms that move by more than a given distance when the positions stored
+ * on the device are replaced by new ones.  Only every stride-th atom is examined.
+ */
+template <class Real4>
+static double fractionDisplaced(ComputeContext& cc, const vector<Vec3>& positions, double threshold, int stride) {
+    int numParticles = cc.getNumAtoms();
+    if (numParticles == 0)
+        return 0.0;
+    const vector<int>& order = cc.getAtomIndex();
+    Real4* oldPosq = (Real4*) cc.getPinnedBuffer();
+    cc.getPosq().download(oldPosq);
+    Vec3 a, b, c;
+    cc.getPeriodicBoxVectors(a, b, c);
+    bool periodic = cc.getNonbondedUtilities().getUsePeriodic();
+    double threshold2 = threshold*threshold;
+    int count = 0, total = 0;
+    for (int i = 0; i < numParticles; i += stride) {
+        total++;
+        const Vec3& p = positions[order[i]];
+        Vec3 d(p[0]-oldPosq[i].x, p[1]-oldPosq[i].y, p[2]-oldPosq[i].z);
+        if (d.dot(d) <= threshold2)
+            continue; // Fast path: this atom has not moved far, so no need for the minimum image.
+        if (periodic) {
+            d -= c*floor(d[2]/c[2]+0.5);
+            d -= b*floor(d[1]/b[1]+0.5);
+            d -= a*floor(d[0]/a[0]+0.5);
+        }
+        if (d.dot(d) > threshold2)
+            count++;
+    }
+    return count/(double) total;
+}
+
+/**
+ * Determine whether new positions differ enough from the ones stored on the device that the
+ * current atom order is no longer spatially coherent.
+ */
+static bool isLargePositionChange(ComputeContext& cc, const vector<Vec3>& positions) {
+    const double threshold = 0.25; // nm
+    const double maxFraction = 0.1;
+    const int stride = 8;
+    double fraction = (cc.getUseDoublePrecision() ? fractionDisplaced<mm_double4>(cc, positions, threshold, stride) :
+            fractionDisplaced<mm_float4>(cc, positions, threshold, stride));
+    return (fraction > maxFraction);
+}
+
 void CommonUpdateStateDataKernel::setPositions(ContextImpl& context, const vector<Vec3>& positions) {
     ContextSelector selector(cc);
     const vector<int>& order = cc.getAtomIndex();
     int numParticles = context.getSystem().getNumParticles();
+
+    // If the new positions are very different from the current ones (e.g. a different replica), the
+    // atom order is no longer spatially coherent, which slows the nonbonded kernels.  Force a reorder.
+
+    if (cc.getNonbondedUtilities().getUseCutoff() && isLargePositionChange(cc, positions))
+        cc.forceReorder();
     if (cc.getUseDoublePrecision()) {
         double* pos = (double*) cc.getPinnedBuffer();
         for (int i = 0; i < numParticles; ++i) {

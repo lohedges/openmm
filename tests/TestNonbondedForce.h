@@ -1243,6 +1243,100 @@ void testReordering() {
     }
 }
 
+void testSetPositionsLargeChange() {
+    // Replacing the positions with a very different configuration makes the GPU platforms reorder the atoms
+    // (see CommonUpdateStateDataKernel::setPositions).  Check that positions, velocities and forces are all
+    // still correct afterward, both after a large change and after a change to a single molecule.
+
+    const int numMolecules = 400;
+    const int numParticles = 2*numMolecules;
+    const double boxSize = 6.0;
+    System system;
+    system.setDefaultPeriodicBoxVectors(Vec3(boxSize, 0, 0), Vec3(0, boxSize, 0), Vec3(0, 0, boxSize));
+    NonbondedForce* nonbonded = new NonbondedForce();
+    nonbonded->setNonbondedMethod(NonbondedForce::CutoffPeriodic);
+    nonbonded->setCutoffDistance(1.0);
+    HarmonicBondForce* bonds = new HarmonicBondForce();
+    for (int i = 0; i < numMolecules; i++) {
+        system.addParticle(1.0);
+        system.addParticle(1.0);
+        nonbonded->addParticle(0.5, 0.2, 0.5);
+        nonbonded->addParticle(-0.5, 0.2, 0.5);
+        nonbonded->addException(2*i, 2*i+1, 0.0, 1.0, 0.0);
+        bonds->addBond(2*i, 2*i+1, 0.15, 1000.0);
+    }
+    system.addForce(nonbonded);
+    system.addForce(bonds);
+
+    // Build two unrelated configurations.  Each puts the molecules on randomly chosen sites of a grid, so
+    // that nearly every molecule is in a different place in the two.
+
+    OpenMM_SFMT::SFMT sfmt;
+    init_gen_rand(0, sfmt);
+    const int gridSize = 8;
+    vector<vector<Vec3> > configs(2);
+    for (int c = 0; c < 2; c++) {
+        vector<int> sites(gridSize*gridSize*gridSize);
+        for (int i = 0; i < (int) sites.size(); i++)
+            sites[i] = i;
+        for (int i = sites.size()-1; i > 0; i--)
+            swap(sites[i], sites[(int) (genrand_real2(sfmt)*(i+1))]);
+        for (int i = 0; i < numMolecules; i++) {
+            int site = sites[i];
+            Vec3 center((site%gridSize + 0.5)*boxSize/gridSize, ((site/gridSize)%gridSize + 0.5)*boxSize/gridSize, (site/(gridSize*gridSize) + 0.5)*boxSize/gridSize);
+            center += Vec3(genrand_real2(sfmt)-0.5, genrand_real2(sfmt)-0.5, genrand_real2(sfmt)-0.5)*0.1;
+            configs[c].push_back(center);
+            configs[c].push_back(center+Vec3(0.15, 0, 0));
+        }
+    }
+    vector<vector<Vec3> > velocities(2);
+    for (int c = 0; c < 2; c++)
+        for (int i = 0; i < numParticles; i++)
+            velocities[c].push_back(Vec3(genrand_real2(sfmt)-0.5, genrand_real2(sfmt)-0.5, genrand_real2(sfmt)-0.5));
+
+    VerletIntegrator integrator(0.0005);
+    Context context(system, integrator, platform);
+    bool single = (platform.getName() != "Reference");
+    for (const string& name : platform.getPropertyNames())
+        if (name == "Precision" && platform.getPropertyValue(context, name) == "double")
+            single = false;
+    double tol = (single ? 1e-5 : 1e-12);
+    double forceTol = (single ? 1e-3 : 1e-8);
+    context.setPositions(configs[0]);
+    context.setVelocities(velocities[0]);
+    integrator.step(2); // Make sure atoms have been reordered once.
+
+    // Replace the velocities, then the positions, with a completely different configuration.  If the atoms are
+    // reordered by the second call, the velocities must be reordered along with them.
+
+    for (int step = 0; step < 2; step++) {
+        vector<Vec3> positions = configs[1];
+        if (step == 1) {
+            // Now change a single molecule.
+
+            positions[20] += Vec3(0.1, -0.05, 0.07);
+            positions[21] += Vec3(0.1, -0.05, 0.07);
+        }
+        context.setVelocities(velocities[1]);
+        context.setPositions(positions);
+        State state = context.getState(State::Positions | State::Velocities | State::Forces | State::Energy);
+        for (int i = 0; i < numParticles; i++) {
+            ASSERT_EQUAL_VEC(positions[i], state.getPositions()[i], tol);
+            ASSERT_EQUAL_VEC(velocities[1][i], state.getVelocities()[i], tol);
+        }
+
+        // Compare the forces and energy to a new context, which has never had a different configuration.
+
+        VerletIntegrator integrator2(0.0005);
+        Context context2(system, integrator2, platform);
+        context2.setPositions(positions);
+        State state2 = context2.getState(State::Forces | State::Energy);
+        ASSERT_EQUAL_TOL(state2.getPotentialEnergy(), state.getPotentialEnergy(), forceTol);
+        for (int i = 0; i < numParticles; i++)
+            ASSERT_EQUAL_VEC(state2.getForces()[i], state.getForces()[i], forceTol);
+    }
+}
+
 void runPlatformTests();
 
 int main(int argc, char* argv[]) {
@@ -1267,6 +1361,7 @@ int main(int argc, char* argv[]) {
         testParameterOffsets();
         testEwaldExceptions();
         testDirectAndReciprocal();
+        testSetPositionsLargeChange();
         runPlatformTests();
     }
     catch(const exception& e) {
