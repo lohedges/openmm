@@ -59,7 +59,7 @@ public:
 };
 
 HipNonbondedUtilities::HipNonbondedUtilities(HipContext& context) : context(context), useCutoff(false), usePeriodic(false), useNeighborList(false), anyExclusions(false), usePadding(true),
-        pinnedCountBuffer(NULL), forceRebuildNeighborList(true), groupFlags(0), canUsePairList(true), tilesAfterReorder(0) {
+        pinnedCountBuffer(NULL), forceRebuildNeighborList(true), groupFlags(0), canUsePairList(true), tilesAfterReorder(0), singlePairsAfterReorder(0) {
     // Decide how many thread blocks to use.
 
     string errorMessage = "Error initializing nonbonded utilities";
@@ -463,10 +463,21 @@ void HipNonbondedUtilities::computeInteractions(int forceGroups, bool includeFor
 bool HipNonbondedUtilities::updateNeighborListSize() {
     if (!useCutoff)
         return false;
-    if (context.getStepsSinceReorder() == 0 || tilesAfterReorder == 0)
-        tilesAfterReorder = pinnedCountBuffer[0];
-    else if (context.getStepsSinceReorder() > 25 && pinnedCountBuffer[0] > 1.1*tilesAfterReorder)
+    unsigned int tileCount = pinnedCountBuffer[0];
+    unsigned int pairCount = pinnedCountBuffer[1];
+    long long positionsSetAtStep = context.getPositionsSetAtStep();
+    bool steppedSincePositionsSet = (positionsSetAtStep >= 0 && context.getStepCount() != positionsSetAtStep);
+    bool stepping = (positionsSetAtStep < 0 || steppedSincePositionsSet);
+    if (context.getStepsSinceReorder() == 0 || tilesAfterReorder == 0) {
+        tilesAfterReorder = tileCount;
+        singlePairsAfterReorder = max(pairCount, (unsigned int) context.getNumAtoms());
+    }
+    else if (context.getStepsSinceReorder() > 25 && (tileCount > 1.1*tilesAfterReorder || (stepping && pairCount > 1.5*singlePairsAfterReorder)))
         context.forceReorder();
+    else if (steppedSincePositionsSet && (tileCount > 2*tilesAfterReorder || pairCount > 2*singlePairsAfterReorder))
+        context.forceReorder(); // New positions left the order badly out of date and the context is being stepped, so don't wait.
+    if (steppedSincePositionsSet)
+        context.setPositionsSetAtStep(-1);
     if (pinnedCountBuffer[0] <= maxTiles && pinnedCountBuffer[1] <= maxSinglePairs)
         return false;
 

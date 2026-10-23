@@ -50,7 +50,7 @@ public:
 };
 
 MetalNonbondedUtilities::MetalNonbondedUtilities(MetalContext& context) : context(context), useCutoff(false), usePeriodic(false), useNeighborList(false), anyExclusions(false), usePadding(true),
-        forceRebuildNeighborList(true), groupFlags(0), canUsePairList(true), tilesAfterReorder(0) {
+        forceRebuildNeighborList(true), groupFlags(0), canUsePairList(true), tilesAfterReorder(0), singlePairsAfterReorder(0) {
     // Decide how many thread blocks to use.
 
     string errorMessage = "Error initializing nonbonded utilities";
@@ -331,10 +331,21 @@ bool MetalNonbondedUtilities::updateNeighborListSize() {
     if (!useCutoff)
         return false;
     unsigned int* countBuffer = (unsigned int*) interactionCount.getBuffer()->contents();
-    if (context.getStepsSinceReorder() == 0 || tilesAfterReorder == 0)
-        tilesAfterReorder = countBuffer[0];
-    else if (context.getStepsSinceReorder() > 25 && countBuffer[0] > 1.1*tilesAfterReorder)
+    unsigned int tileCount = countBuffer[0];
+    unsigned int pairCount = countBuffer[1];
+    long long positionsSetAtStep = context.getPositionsSetAtStep();
+    bool steppedSincePositionsSet = (positionsSetAtStep >= 0 && context.getStepCount() != positionsSetAtStep);
+    bool stepping = (positionsSetAtStep < 0 || steppedSincePositionsSet);
+    if (context.getStepsSinceReorder() == 0 || tilesAfterReorder == 0) {
+        tilesAfterReorder = tileCount;
+        singlePairsAfterReorder = max(pairCount, (unsigned int) context.getNumAtoms());
+    }
+    else if (context.getStepsSinceReorder() > 25 && (tileCount > 1.1*tilesAfterReorder || (stepping && pairCount > 1.5*singlePairsAfterReorder)))
         context.forceReorder();
+    else if (steppedSincePositionsSet && (tileCount > 2*tilesAfterReorder || pairCount > 2*singlePairsAfterReorder))
+        context.forceReorder(); // New positions left the order badly out of date and the context is being stepped, so don't wait.
+    if (steppedSincePositionsSet)
+        context.setPositionsSetAtStep(-1);
     if (countBuffer[0] <= maxTiles && countBuffer[1] <= maxSinglePairs)
         return false;
 
