@@ -399,10 +399,17 @@ void OpenCLNonbondedUtilities::computeInteractions(int forceGroups, bool include
 bool OpenCLNonbondedUtilities::updateNeighborListSize() {
     if (!useCutoff)
         return false;
+    unsigned int tileCount = pinnedCountMemory[0];
+    long long positionsSetAtStep = context.getPositionsSetAtStep();
+    bool steppedSincePositionsSet = (positionsSetAtStep >= 0 && context.getStepCount() != positionsSetAtStep);
     if (context.getStepsSinceReorder() == 0 || tilesAfterReorder == 0)
-        tilesAfterReorder = pinnedCountMemory[0];
-    else if (context.getStepsSinceReorder() > 25 && pinnedCountMemory[0] > 1.1*tilesAfterReorder)
+        tilesAfterReorder = tileCount;
+    else if (context.getStepsSinceReorder() > 25 && tileCount > 1.1*tilesAfterReorder)
         context.forceReorder();
+    else if (steppedSincePositionsSet && tileCount > 2*tilesAfterReorder)
+        context.forceReorder(); // New positions left the order badly out of date and the context is being stepped, so don't wait.
+    if (steppedSincePositionsSet)
+        context.setPositionsSetAtStep(-1);
     if (pinnedCountMemory[0] <= interactingTiles.getSize())
         return false;
 

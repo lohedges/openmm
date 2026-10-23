@@ -332,7 +332,7 @@ private:
     bool useCutoff, usePeriodic, anyExclusions, usePadding, useNeighborList, forceRebuildNeighborList, canUsePairList, useLargeBlocks, hasInitializedParams;
     int startTileIndex, startBlockIndex, numBlocks, numTilesInBatch, maxExclusions;
     int numForceThreadBlocks, forceThreadBlockSize, findInteractingBlocksThreadBlockSize, numAtoms, groupFlags, paramStartIndex;
-    unsigned int maxTiles, maxSinglePairs, tilesAfterReorder;
+    unsigned int maxTiles, maxSinglePairs, tilesAfterReorder, singlePairsAfterReorder;
     long long numTiles;
     std::string kernelSource;
 };

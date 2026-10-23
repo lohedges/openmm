@@ -44,7 +44,7 @@ const int ComputeContext::ThreadBlockSize = 64;
 const int ComputeContext::TileSize = 32;
 
 ComputeContext::ComputeContext(const System& system) : system(system), time(0.0), stepCount(0), computeForceCount(0), stepsSinceReorder(99999),
-        forceNextReorder(false), atomsWereReordered(false), forcesValid(false), hasInitializedGlobals(false), hasAssignedPosqCharges(false) {
+        positionsSetAtStep(-1), forceNextReorder(false), atomsWereReordered(false), forcesValid(false), hasInitializedGlobals(false), hasAssignedPosqCharges(false) {
     workThread = new WorkThread();
 }
 

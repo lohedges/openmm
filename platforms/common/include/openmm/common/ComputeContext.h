@@ -302,6 +302,20 @@ public:
         atomsWereReordered = wereReordered;
     }
     /**
+     * Get the step count at which positions were last set, or -1 if the nonbonded utilities have
+     * since checked whether the atoms need to be reordered.
+     */
+    long long getPositionsSetAtStep() const {
+        return positionsSetAtStep;
+    }
+    /**
+     * Set the step count at which positions were last set, or -1 if the nonbonded utilities have
+     * since checked whether the atoms need to be reordered.
+     */
+    void setPositionsSetAtStep(long long step) {
+        positionsSetAtStep = step;
+    }
+    /**
      * Reorder the internal arrays of atoms to try to keep spatially contiguous atoms close
      * together in the arrays.
      * 
@@ -664,6 +678,7 @@ protected:
     int numAtomBlocks, numThreadBlocks;
     long long stepCount;
     bool useDoublePrecision, useMixedPrecision, boxIsTriclinic, hasAssignedPosqCharges;
+    long long positionsSetAtStep;
     bool forceNextReorder, atomsWereReordered, forcesValid, hasInitializedGlobals;
     ComputeQueue defaultQueue, currentQueue;
     ComputeKernel clearBufferKernel, clearTwoBuffersKernel, clearThreeBuffersKernel;

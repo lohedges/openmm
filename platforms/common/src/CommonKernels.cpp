@@ -223,6 +223,8 @@ void CommonUpdateStateDataKernel::setPositions(ContextImpl& context, const vecto
     }
     for (auto& offset : cc.getPosCellOffsets())
         offset = mm_int4(0, 0, 0, 0);
+    for (auto ctx : cc.getAllContexts())
+        ctx->setPositionsSetAtStep(cc.getStepCount());
     cc.reorderAtoms();
 }
 
