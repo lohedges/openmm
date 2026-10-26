@@ -46,26 +46,32 @@ __device__ void saveSingleForce(int atom, real3 force, unsigned long long* force
  */
 __device__ void saveSingleForceCombined(int atom, real3 force, unsigned long long* forceBuffers) {
 #if __CUDA_ARCH__ >= 700
+    // Tree reduction within each group of lanes saving to the same atom.  In each round, every lane
+    // adds the value of the next remaining lane in its group, then the lanes at odd ranks drop out.
+
     const unsigned int lane = threadIdx.x&31;
     unsigned int peers = __match_any_sync(0xffffffff, atom);
-    long long fx = realToFixedPoint(force.x);
-    long long fy = realToFixedPoint(force.y);
-    long long fz = realToFixedPoint(force.z);
-    long long sumx = 0, sumy = 0, sumz = 0;
-    unsigned int remaining = peers;
-    while (__any_sync(0xffffffff, remaining != 0)) {
-        int src = (remaining != 0 ? __ffs(remaining)-1 : lane);
-        long long x = real_shfl(fx, src);
-        long long y = real_shfl(fy, src);
-        long long z = real_shfl(fz, src);
-        if (remaining != 0) {
+    const bool isFirst = (lane == __ffs(peers)-1);
+    long long sumx = realToFixedPoint(force.x);
+    long long sumy = realToFixedPoint(force.y);
+    long long sumz = realToFixedPoint(force.z);
+    unsigned int rank = __popc(peers & ((1u<<lane)-1));
+    unsigned int above = peers & (0xfffffffe<<lane);
+    while (__any_sync(0xffffffff, above != 0)) {
+        int next = __ffs(above);
+        int src = (next != 0 ? next-1 : lane);
+        long long x = real_shfl(sumx, src);
+        long long y = real_shfl(sumy, src);
+        long long z = real_shfl(sumz, src);
+        if (next != 0) {
             sumx += x;
             sumy += y;
             sumz += z;
-            remaining &= remaining-1;
         }
+        above &= ~__ballot_sync(0xffffffff, rank&1);
+        rank >>= 1;
     }
-    if (atom >= 0 && lane == __ffs(peers)-1) {
+    if (atom >= 0 && isFirst) {
         if (sumx != 0)
             atomicAdd(&forceBuffers[atom], static_cast<unsigned long long>(sumx));
         if (sumy != 0)
