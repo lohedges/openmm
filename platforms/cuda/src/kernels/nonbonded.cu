@@ -40,6 +40,46 @@ __device__ void saveSingleForce(int atom, real3 force, unsigned long long* force
 }
 
 /**
+ * Save the force on a single atom, first combining the contributions of all lanes in the warp that save
+ * to the same atom so that only one of them performs the atomic adds.  All lanes must call this; lanes
+ * with nothing to save pass atom = -1.
+ */
+__device__ void saveSingleForceCombined(int atom, real3 force, unsigned long long* forceBuffers) {
+#if __CUDA_ARCH__ >= 700
+    const unsigned int lane = threadIdx.x&31;
+    unsigned int peers = __match_any_sync(0xffffffff, atom);
+    long long fx = realToFixedPoint(force.x);
+    long long fy = realToFixedPoint(force.y);
+    long long fz = realToFixedPoint(force.z);
+    long long sumx = 0, sumy = 0, sumz = 0;
+    unsigned int remaining = peers;
+    while (__any_sync(0xffffffff, remaining != 0)) {
+        int src = (remaining != 0 ? __ffs(remaining)-1 : lane);
+        long long x = real_shfl(fx, src);
+        long long y = real_shfl(fy, src);
+        long long z = real_shfl(fz, src);
+        if (remaining != 0) {
+            sumx += x;
+            sumy += y;
+            sumz += z;
+            remaining &= remaining-1;
+        }
+    }
+    if (atom >= 0 && lane == __ffs(peers)-1) {
+        if (sumx != 0)
+            atomicAdd(&forceBuffers[atom], static_cast<unsigned long long>(sumx));
+        if (sumy != 0)
+            atomicAdd(&forceBuffers[atom+PADDED_NUM_ATOMS], static_cast<unsigned long long>(sumy));
+        if (sumz != 0)
+            atomicAdd(&forceBuffers[atom+2*PADDED_NUM_ATOMS], static_cast<unsigned long long>(sumz));
+    }
+#else
+    if (atom >= 0)
+        saveSingleForce(atom, force, forceBuffers);
+#endif
+}
+
+/**
  * Compute nonbonded interactions. The kernel is separated into two parts,
  * tiles with exclusions and tiles without exclusions. It relies heavily on 
  * implicit warp-level synchronization. A tile is defined by two atom blocks 
@@ -480,40 +520,52 @@ extern "C" __global__ void computeNonbonded(
     const unsigned int numPairs = interactionCount[1];
     if (numPairs > maxSinglePairs)
         return; // There wasn't enough memory for the neighbor list.
-    for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < numPairs; i += blockDim.x*gridDim.x) {
-        int2 pair = singlePairs[i];
-        int atom1 = pair.x;
-        int atom2 = pair.y;
-        real4 posq1 = posq[atom1];
-        real4 posq2 = posq[atom2];
-        LOAD_ATOM1_PARAMETERS
-        LOAD_ATOM2_PARAMETERS_FROM_GLOBAL
-        real3 delta = make_real3(posq2.x-posq1.x, posq2.y-posq1.y, posq2.z-posq1.z);
+    const int warpLane = threadIdx.x&31;
+    for (int warpStart = blockIdx.x*blockDim.x+threadIdx.x-warpLane; warpStart < numPairs; warpStart += blockDim.x*gridDim.x) {
+        int i = warpStart+warpLane;
+        int savedAtom1 = -1, savedAtom2 = -1;
+        real3 force1 = make_real3(0), force2 = make_real3(0);
+        if (i < numPairs) {
+            int2 pair = singlePairs[i];
+            int atom1 = pair.x;
+            int atom2 = pair.y;
+            real4 posq1 = posq[atom1];
+            real4 posq2 = posq[atom2];
+            LOAD_ATOM1_PARAMETERS
+            LOAD_ATOM2_PARAMETERS_FROM_GLOBAL
+            real3 delta = make_real3(posq2.x-posq1.x, posq2.y-posq1.y, posq2.z-posq1.z);
 #ifdef USE_PERIODIC
-        APPLY_PERIODIC_TO_DELTA(delta)
+            APPLY_PERIODIC_TO_DELTA(delta)
 #endif
-        real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
-        real invR = RSQRT(r2);
-        real r = r2*invR;
+            real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+            real invR = RSQRT(r2);
+            real r = r2*invR;
 #ifdef USE_SYMMETRIC
-        real dEdR = 0.0f;
+            real dEdR = 0.0f;
 #else
-        real3 dEdR1 = make_real3(0);
-        real3 dEdR2 = make_real3(0);
+            real3 dEdR1 = make_real3(0);
+            real3 dEdR2 = make_real3(0);
 #endif
-        bool hasExclusions = false;
-        bool isExcluded = false;
-        real tempEnergy = 0.0f;
-        const real interactionScale = 1.0f;
-        COMPUTE_INTERACTION
-        energy += tempEnergy;
+            bool hasExclusions = false;
+            bool isExcluded = false;
+            real tempEnergy = 0.0f;
+            const real interactionScale = 1.0f;
+            COMPUTE_INTERACTION
+            energy += tempEnergy;
 #ifdef INCLUDE_FORCES
 #ifdef USE_SYMMETRIC
-        real3 dEdR1 = delta*dEdR;
-        real3 dEdR2 = -dEdR1;
+            real3 dEdR1 = delta*dEdR;
+            real3 dEdR2 = -dEdR1;
 #endif
-        saveSingleForce(atom1, -dEdR1, forceBuffers);
-        saveSingleForce(atom2, -dEdR2, forceBuffers);
+            savedAtom1 = atom1;
+            savedAtom2 = atom2;
+            force1 = -dEdR1;
+            force2 = -dEdR2;
+#endif
+        }
+#ifdef INCLUDE_FORCES
+        saveSingleForceCombined(savedAtom1, force1, forceBuffers);
+        saveSingleForceCombined(savedAtom2, force2, forceBuffers);
 #endif
     }
 #endif
